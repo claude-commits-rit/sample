@@ -1,0 +1,240 @@
+6.8  IWDG WITH UART HEALTH MENU
+===============================
+
+Board      : STM32F407G-DISC1 (Discovery)
+Tool       : STM32CubeIDE, HAL
+Clock      : HSI 16 MHz (timer clock 16 MHz) unless stated
+Debug      : SYS -> Serial Wire, always
+Onboard    : PD12 green, PD13 orange, PD14 red, PD15 blue, PA0 user button
+             (HIGH when pressed), LIS3DSH accelerometer on SPI1
+             (PA5 SCK, PA6 MISO, PA7 MOSI, PE3 CS), internal ADC temp/VREFINT
+UART       : USART2, PA2 = TX, PA3 = RX, 115200 8N1, no flow control.
+             The Discovery has no USB-serial, so connect a USB-TTL adapter
+             (adapter TX -> PA3, adapter RX -> PA2, GND -> GND, 3.3 V logic).
+
+Scenario:
+A watchdog-protected system with a UART menu:
+    '1' -> normal mode (refresh IWDG, PD12 ON)
+    '2' -> simulate hang (stop refreshing, PD13 ON)
+    '3' -> print the reset cause of the last start-up
+On start-up print "Reset cause: POWER-ON" or "Reset cause: WATCHDOG".
+
+Tasks:
+1. IWDG about 3 s.
+2. Read __HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST), then __HAL_RCC_CLEAR_RESET_FLAGS().
+3. UART receive by interrupt; refresh only in normal mode.
+4. Count watchdog resets in a variable placed in a section that survives
+   reset, or explain why a normal variable is cleared.
+
+Doubts to answer:
+- Why must the reset flags be cleared?
+- What happens to the watchdog when the debugger halts the CPU?
+
+======================================================================
+SOLUTION
+======================================================================
+
+STEP 1 - CubeMX (.ioc) settings
+------------------------------------------------------------
+SYS               | Debug = Serial Wire
+RCC               | default (HSI 16 MHz)
+PD12, PD13        | GPIO_Output
+USART2            | Asynchronous, 115200, 8N1 (PA2 TX, PA3 RX)
+USART2 NVIC       | USART2 global interrupt ON (if using _IT)
+IWDG              | Prescaler 32, Reload 2999 (about 3 s)
+------------------------------------------------------------
+
+STEP 2 - replace the WHOLE Core/Src/main.c with the code below
+------------------------------------------------------------
+/* ============================================================
+   6.8 - complete main.c for STM32F407G-DISC1
+   1. New STM32 project -> Board Selector -> STM32F4DISCOVERY.
+      "Initialize all peripherals with their default mode?" -> NO.
+   2. In the .ioc apply the CubeMX table of this question, save (Ctrl+S)
+      so CubeIDE generates the HAL drivers, msp and interrupt files.
+   3. Open Core/Src/main.c, select all, paste this whole file. Build.
+   ------------------------------------------------------------
+Reset counter: a normal global is zeroed by the startup code after every
+reset. To keep a count, store it in an RTC backup register
+(HAL_RTCEx_BKUPWrite / BKUPRead, needs RTC enabled).
+   ============================================================ */
+#include "main.h"
+
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+UART_HandleTypeDef huart2;
+IWDG_HandleTypeDef hiwdg;
+
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* USER CODE BEGIN PV */
+uint8_t rx;
+volatile uint8_t got =0;
+uint8_t mode =1;   /* 1 normal, 2 hang */
+uint8_t wd_reset =0;
+/* USER CODE END PV */
+
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_IWDG_Init(void);
+
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_USART2_UART_Init();
+    MX_IWDG_Init();
+
+    /* USER CODE BEGIN 2 */
+	if(__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST))
+	{
+		wd_reset =1;
+	}
+	__HAL_RCC_CLEAR_RESET_FLAGS();
+
+	if(wd_reset)
+	{
+		HAL_UART_Transmit(&huart2, (uint8_t*)"Reset cause: WATCHDOG\r\n", 23, 100);
+	}
+	else
+	{
+		HAL_UART_Transmit(&huart2, (uint8_t*)"Reset cause: POWER-ON\r\n", 23, 100);
+	}
+	HAL_UART_Transmit(&huart2, (uint8_t*)"1 normal, 2 hang, 3 reset cause\r\n", 33, 100);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, 1);
+	HAL_UART_Receive_IT(&huart2, &rx, 1);
+    /* USER CODE END 2 */
+
+    while (1)
+    {
+    /* USER CODE BEGIN 3 */
+	if(got)
+	{
+		got =0;
+		if(rx == '1')
+		{
+			mode =1;
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, 1);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, 0);
+			HAL_UART_Transmit(&huart2, (uint8_t*)"Normal\r\n", 8, 100);
+		}
+		else if(rx == '2')
+		{
+			mode =2;
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, 0);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, 1);
+			HAL_UART_Transmit(&huart2, (uint8_t*)"Hang simulated\r\n", 16, 100);
+		}
+		else if(rx == '3')
+		{
+			if(wd_reset)
+			{
+				HAL_UART_Transmit(&huart2, (uint8_t*)"Reset cause: WATCHDOG\r\n", 23, 100);
+			}
+			else
+			{
+				HAL_UART_Transmit(&huart2, (uint8_t*)"Reset cause: POWER-ON\r\n", 23, 100);
+			}
+		}
+		HAL_UART_Receive_IT(&huart2, &rx, 1);
+	}
+
+	if(mode == 1)
+	{
+		HAL_IWDG_Refresh(&hiwdg);
+	}
+	HAL_Delay(100);
+    /* USER CODE END 3 */
+    }
+}
+
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.LSIState = RCC_LSI_ON;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_13, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_13;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+}
+
+static void MX_USART2_UART_Init(void)
+{
+    huart2.Instance = USART2;
+    huart2.Init.BaudRate = 115200;
+    huart2.Init.WordLength = UART_WORDLENGTH_8B;
+    huart2.Init.StopBits = UART_STOPBITS_1;
+    huart2.Init.Parity = UART_PARITY_NONE;
+    huart2.Init.Mode = UART_MODE_TX_RX;
+    huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+    if (HAL_UART_Init(&huart2) != HAL_OK) Error_Handler();
+}
+
+static void MX_IWDG_Init(void)
+{
+    hiwdg.Instance = IWDG;
+    hiwdg.Init.Prescaler = IWDG_PRESCALER_32;
+    hiwdg.Init.Reload = 2999;
+    if (HAL_IWDG_Init(&hiwdg) != HAL_OK) Error_Handler();
+}
+
+/* USER CODE BEGIN 4 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if(huart->Instance == USART2)
+	{
+		got =1;
+	}
+}
+/* USER CODE END 4 */
+
+void Error_Handler(void)
+{
+    __disable_irq();
+    while (1) { }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line) { }
+#endif

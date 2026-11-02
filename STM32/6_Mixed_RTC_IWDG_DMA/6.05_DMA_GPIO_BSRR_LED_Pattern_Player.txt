@@ -1,0 +1,236 @@
+6.5  DMA GPIO BSRR LED PATTERN PLAYER
+=====================================
+
+Board      : STM32F407G-DISC1 (Discovery)
+Tool       : STM32CubeIDE, HAL
+Clock      : HSI 16 MHz (timer clock 16 MHz) unless stated
+Debug      : SYS -> Serial Wire, always
+Onboard    : PD12 green, PD13 orange, PD14 red, PD15 blue, PA0 user button
+             (HIGH when pressed), LIS3DSH accelerometer on SPI1
+             (PA5 SCK, PA6 MISO, PA7 MOSI, PE3 CS), internal ADC temp/VREFINT
+
+Source     : class mixed-scenario sheet, Q9 (no external components)
+
+Scenario:
+Play a repeating LED pattern from memory without repeatedly writing the GPIO
+register from the main loop. A timer update event must request DMA transfers
+to the GPIOD bit set/reset register (BSRR).
+
+Tasks:
+1. Create a Flash or RAM table containing a repeating sequence of LED masks.
+2. Configure a timer update event at 5 Hz or another documented rate.
+3. Configure DMA in circular memory-to-peripheral mode with source increment
+   enabled and the GPIOD BSRR destination fixed.
+4. Build each 32-bit BSRR table value so that the four previous LEDs are
+   cleared and the desired PD12-PD15 pattern is set.
+5. Start the timer and DMA. The main loop must not write the LED pattern on
+   every step.
+6. Verify that the LEDs repeat the pattern and that the DMA buffer index,
+   transfer-complete status and timer update event change as expected.
+7. Add a PA0-controlled pause/resume feature without stopping the debugger
+   connection.
+8. Test an all-OFF pattern, an all-ON pattern, a single-LED pattern and a
+   repeated pattern with consecutive identical entries.
+
+======================================================================
+SOLUTION
+======================================================================
+
+STEP 1 - CubeMX (.ioc) settings
+------------------------------------------------------------
+SYS               | Debug = Serial Wire
+RCC               | default (HSI 16 MHz)
+PD12-PD15         | GPIO_Output
+PA0               | GPIO_EXTI0 rising, NVIC EXTI line0 ON
+TIM1              | Internal clock, PSC 15999, ARR 199 (16 MHz -> 200 ms = 5 Hz)
+TIM1 DMA Settings | Add TIM1_UP: Memory To Peripheral, Circular,
+                  | Memory increment ON, Peripheral increment OFF, Word / Word
+------------------------------------------------------------
+
+STEP 2 - replace the WHOLE Core/Src/main.c with the code below
+------------------------------------------------------------
+/* ============================================================
+   6.5 - complete main.c for STM32F407G-DISC1
+   1. New STM32 project -> Board Selector -> STM32F4DISCOVERY.
+      "Initialize all peripherals with their default mode?" -> NO.
+   2. In the .ioc apply the CubeMX table of this question, save (Ctrl+S)
+      so CubeIDE generates the HAL drivers, msp and interrupt files.
+   3. Open Core/Src/main.c, select all, paste this whole file. Build.
+   ------------------------------------------------------------
+BSRR: bits 0-15 set a pin, bits 16-31 reset a pin (set wins if both).
+Value = (0xF000 << 16) | mask  -> clears PD12-15 then sets the wanted ones.
+
+ while(1) stays empty - the DMA moves the pattern 
+
+Debugger: watch hdma_tim1_up.Instance->NDTR (counts down = buffer index).
+   ============================================================ */
+#include "main.h"
+
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+TIM_HandleTypeDef htim1;
+DMA_HandleTypeDef hdma_tim1_up;
+
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* USER CODE BEGIN PV */
+/* BSRR value: upper 16 bits = turn OFF, lower 16 bits = turn ON
+   0xF0000000 turns off PD12-15, then the pin after | turns on */
+uint32_t pattern[7] = {
+	0xF0000000 | GPIO_PIN_12,
+	0xF0000000 | GPIO_PIN_13,
+	0xF0000000 | GPIO_PIN_14,
+	0xF0000000 | GPIO_PIN_15,
+	0xF0000000 | GPIO_PIN_15,
+	0xF0000000 | 0xF000,
+	0xF0000000
+};
+volatile uint8_t paused =0;
+uint32_t last =0;
+/* USER CODE END PV */
+
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
+static void MX_TIM1_Init(void);
+
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_DMA_Init();
+    MX_TIM1_Init();
+
+    /* USER CODE BEGIN 2 */
+	HAL_DMA_Start(&hdma_tim1_up, (uint32_t)pattern, (uint32_t)&GPIOD->BSRR, 7);
+	__HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE);
+	HAL_TIM_Base_Start(&htim1);
+    /* USER CODE END 2 */
+
+    while (1)
+    {
+    /* USER CODE BEGIN 3 */
+
+    /* USER CODE END 3 */
+    }
+}
+
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_0;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+}
+
+static void MX_DMA_Init(void)
+{
+    __HAL_RCC_DMA1_CLK_ENABLE();
+    __HAL_RCC_DMA2_CLK_ENABLE();
+    HAL_NVIC_SetPriority(DMA2_Stream5_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DMA2_Stream5_IRQn);
+}
+
+static void MX_TIM1_Init(void)
+{
+    TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+    TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+    htim1.Instance = TIM1;
+    htim1.Init.Prescaler = 15999;
+    htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim1.Init.Period = 199;
+    htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim1.Init.RepetitionCounter = 0;
+    htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if (HAL_TIM_Base_Init(&htim1) != HAL_OK) Error_Handler();
+    sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+    if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK) Error_Handler();
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+    sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+    if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK) Error_Handler();
+}
+
+/* USER CODE BEGIN 4 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	uint32_t now = HAL_GetTick();
+	if(GPIO_Pin == GPIO_PIN_0 && now-last>250)
+	{
+		last =now;
+		if(paused == 0)
+		{
+			paused =1;
+		}
+		else
+		{
+			paused =0;
+		}
+		if(paused)
+		{
+			__HAL_TIM_DISABLE_DMA(&htim1, TIM_DMA_UPDATE);
+		}
+		else
+		{
+			__HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE);
+		}
+	}
+}
+/* USER CODE END 4 */
+
+void Error_Handler(void)
+{
+    __disable_irq();
+    while (1) { }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line) { }
+#endif

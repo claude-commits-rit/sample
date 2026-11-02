@@ -1,0 +1,116 @@
+Q25. UART CHARACTER STATISTICS
+==============================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+Receive text until Enter. Then print:
+    length, uppercase count, lowercase count, digit count, space count,
+    symbol count, and the most frequent character.
+Green blinks once per received character.
+
+Tasks:
+1. Interrupt reception one byte at a time into a 64-byte buffer.
+2. Analysis done in main after '\r'.
+3. Handle buffer full (print "Too long").
+
+Doubts:
+- How do you find the most frequent character with an int[256] array?
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+#include <stdio.h>
+#include <string.h>
+
+char rx;
+char buf[64];
+int len =0;
+volatile uint8_t got =0;
+int freq[256];
+char msg[96];
+
+void UART_RxCpltCallback(UART_Handle_t *huart)
+{
+	got =1;
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_GREEN, GPIO_OUT);
+	RGB_GREEN_RST;
+	UART_Init(&huart0);
+	UART_Receive_IT(&huart0, &rx, 1);
+
+	while(1)
+	{
+		if(got)
+		{
+			got =0;
+			if(rx == '\r')
+			{
+				int up =0, low =0, dig =0, sp =0, sym =0, best =' ';
+				memset(freq, 0, sizeof(freq));
+				for(int i=0 ; i<len ; i++)
+				{
+					unsigned char c = buf[i];
+					if(c >= 'A' && c <= 'Z')
+					{
+						up++;
+					}
+					else if(c >= 'a' && c <= 'z')
+					{
+						low++;
+					}
+					else if(c >= '0' && c <= '9')
+					{
+						dig++;
+					}
+					else if(c == ' ' || c == '\t')
+					{
+						sp++;
+					}
+					else
+					{
+						sym++;
+					}
+					freq[c]++;
+					if(freq[c] > freq[best])
+					{
+						best =c;
+					}
+				}
+				sprintf(msg, "\r\nLen %d Up %d Low %d Dig %d Space %d Sym %d Most '%c'\r\n", len, up, low, dig, sp, sym, best);
+				UART_Transmit(&huart0, msg, strlen(msg));
+				len =0;
+			}
+			else if(rx != '\n')
+			{
+				if(len < 63)
+				{
+					buf[len++] = rx;
+					GPIO_TogglePin(GPIOB, RGB_GREEN);
+				}
+				else
+				{
+					UART_Transmit(&huart0, "Too long\r\n", 10);
+				}
+			}
+			UART_Receive_IT(&huart0, &rx, 1);
+		}
+	}
+}

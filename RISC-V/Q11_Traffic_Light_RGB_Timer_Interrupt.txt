@@ -1,0 +1,108 @@
+Q11. TRAFFIC LIGHT RGB TIMER INTERRUPT
+======================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+Traffic light on the RGB LED: GREEN 3 s -> BLUE (as amber) 1 s -> RED 2 s
+-> repeat. Print the current state over UART at every change.
+
+Tasks:
+1. Timer 0 periodic interrupt at 100 ms; count ticks in the callback.
+2. Use a state variable (0 green, 1 amber, 2 red).
+3. The callback only updates state/flags; main prints and drives the LED.
+
+Doubts:
+- Why 100 ms ticks plus a counter instead of one long LoadCount?
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+
+#define MILLIS(ms) ((uint32_t)((ms) * 100000UL))
+
+/* state: 0 GREEN 3 s, 1 AMBER (blue) 1 s, 2 RED 2 s. One tick = 100 ms */
+volatile uint8_t ticks =0;
+volatile uint8_t state =0;
+volatile uint8_t changed =1;
+
+void TIMER_ElapsedCallback(TIMER_Handle_t *htimer)
+{
+	if(htimer == &htimer0)
+	{
+		ticks++;
+		if(state == 0 && ticks >= 30)
+		{
+			state =1;
+			ticks =0;
+			changed =1;
+		}
+		else if(state == 1 && ticks >= 10)
+		{
+			state =2;
+			ticks =0;
+			changed =1;
+		}
+		else if(state == 2 && ticks >= 20)
+		{
+			state =0;
+			ticks =0;
+			changed =1;
+		}
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_GREEN, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_BLUE, GPIO_OUT);
+	RGB_RED_RST;
+	RGB_GREEN_RST;
+	RGB_BLUE_RST;
+	UART_Init(&huart0);
+
+	htimer0.LoadCount = MILLIS(100);
+	TIMER_Init(&htimer0);
+	TIMER_Start_IT(&htimer0);
+
+	while(1)
+	{
+		if(changed)
+		{
+			changed =0;
+			RGB_RED_RST;
+			RGB_GREEN_RST;
+			RGB_BLUE_RST;
+			if(state == 0)
+			{
+				RGB_GREEN_SET;
+				UART_Transmit(&huart0, "State: GREEN\r\n", 14);
+			}
+			else if(state == 1)
+			{
+				RGB_BLUE_SET;
+				UART_Transmit(&huart0, "State: AMBER (blue)\r\n", 21);
+			}
+			else
+			{
+				RGB_RED_SET;
+				UART_Transmit(&huart0, "State: RED\r\n", 12);
+			}
+		}
+	}
+}

@@ -1,0 +1,120 @@
+Q21. UART BLINK RATE COMMAND
+============================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+Command "B NNN" + Enter sets the blue LED blink period to NNN ms
+(100-2000). "S" stops blinking, "?" prints the current period.
+
+Tasks:
+1. Receive a line by interrupt, one byte at a time.
+2. Parse the number with atoi(); reject out-of-range values.
+3. Reconfigure Timer 0 with the new LoadCount.
+
+Doubts:
+- What is LoadCount for 750 ms at 100 MHz?
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#define MILLIS(ms) ((uint32_t)((ms) * 100000UL))
+
+char rx;
+char cmd[16];
+uint8_t idx =0;
+volatile uint8_t got =0;
+int period =0;
+char msg[40];
+
+void UART_RxCpltCallback(UART_Handle_t *huart)
+{
+	got =1;
+}
+
+void TIMER_ElapsedCallback(TIMER_Handle_t *htimer)
+{
+	if(htimer == &htimer0)
+	{
+		GPIO_TogglePin(GPIOB, RGB_BLUE);
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_BLUE, GPIO_OUT);
+	RGB_BLUE_RST;
+	UART_Init(&huart0);
+	UART_Receive_IT(&huart0, &rx, 1);
+
+	while(1)
+	{
+		if(got)
+		{
+			got =0;
+			if(rx == '\r')
+			{
+				cmd[idx] = 0;
+				idx=0;
+				if(cmd[0] == 'B' && cmd[1] == ' ')
+				{
+					int p = atoi(&cmd[2]);
+					if(p >= 100 && p <= 2000)
+					{
+						period =p;
+						TIMER_Stop(&htimer0);
+						htimer0.LoadCount = MILLIS(p);
+						TIMER_Init(&htimer0);
+						TIMER_Start_IT(&htimer0);
+						sprintf(msg, "Period %d ms\r\n", p);
+						UART_Transmit(&huart0, msg, strlen(msg));
+					}
+					else
+					{
+						UART_Transmit(&huart0, "Range 100-2000\r\n", 16);
+					}
+				}
+				else if(strcmp(cmd, "S") == 0)
+				{
+					period =0;
+					TIMER_Stop(&htimer0);
+					RGB_BLUE_RST;
+					UART_Transmit(&huart0, "Stopped\r\n", 9);
+				}
+				else if(strcmp(cmd, "?") == 0)
+				{
+					sprintf(msg, "Period %d ms\r\n", period);
+					UART_Transmit(&huart0, msg, strlen(msg));
+				}
+				else
+				{
+					UART_Transmit(&huart0, "Invalid\r\n", 9);
+				}
+			}
+			else if(rx != '\n' && idx < 15)
+			{
+				cmd[idx++] = rx;
+			}
+			UART_Receive_IT(&huart0, &rx, 1);
+		}
+	}
+}
+/* 750 ms -> LoadCount = 750 x 100000 = 75 000 000 */

@@ -1,0 +1,142 @@
+Q9. UART COMMAND LED CONTROLLER
+================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Source     : class RISC-V practice sheet, Question 9
+
+Build a UART-controlled RGB LED application using one-byte UART interrupt
+reception. Accept the following commands:
+
+- r: red LED only
+- g: green LED only
+- b: blue LED only
+- o: all LEDs off
+- s: report the current LED state
+
+After a command is completed, the UART receive callback must set a flag. The
+main loop must decode the command, update the LEDs, transmit the response, and
+arm the next one-byte receive operation.
+
+Invalid commands must produce:
+
+    Invalid command. Use r, g, b, o, or s.
+
+Uppercase commands should work exactly like lowercase commands.
+
+Required concepts:
+- UART interrupt reception
+- GPIO output control
+- command parser
+- callback-to-main event communication
+
+Reference files:
+- examples/UART/UART_Interrupt/uart_int.c
+- examples/Blinky/blinky.c
+- hal/drivers/hal_uart.c
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+
+char rx;
+volatile uint8_t got =0;
+char state ='o';
+
+void UART_RxCpltCallback(UART_Handle_t *huart)
+{
+	got =1;
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_GREEN, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_BLUE, GPIO_OUT);
+	RGB_RED_RST;
+	RGB_GREEN_RST;
+	RGB_BLUE_RST;
+	UART_Init(&huart0);
+	UART_Receive_IT(&huart0, &rx, 1);
+
+	while(1)
+	{
+		if(got)
+		{
+			got =0;
+			char c = rx;
+			if(c >= 'A' && c <= 'Z')
+			{
+				c = c + 32;   /* to lowercase */
+			}
+
+			if(c == '\r' || c == '\n')
+			{
+			}
+			else if(c == 'r' || c == 'g' || c == 'b' || c == 'o')
+			{
+				RGB_RED_RST;
+				RGB_GREEN_RST;
+				RGB_BLUE_RST;
+				state =c;
+				if(c == 'r')
+				{
+					RGB_RED_SET;
+					UART_Transmit(&huart0, "Red LED ON\r\n", 12);
+				}
+				else if(c == 'g')
+				{
+					RGB_GREEN_SET;
+					UART_Transmit(&huart0, "Green LED ON\r\n", 14);
+				}
+				else if(c == 'b')
+				{
+					RGB_BLUE_SET;
+					UART_Transmit(&huart0, "Blue LED ON\r\n", 13);
+				}
+				else
+				{
+					UART_Transmit(&huart0, "All LEDs OFF\r\n", 14);
+				}
+			}
+			else if(c == 's')
+			{
+				if(state == 'r')
+				{
+					UART_Transmit(&huart0, "State: RED\r\n", 12);
+				}
+				else if(state == 'g')
+				{
+					UART_Transmit(&huart0, "State: GREEN\r\n", 14);
+				}
+				else if(state == 'b')
+				{
+					UART_Transmit(&huart0, "State: BLUE\r\n", 13);
+				}
+				else
+				{
+					UART_Transmit(&huart0, "State: OFF\r\n", 12);
+				}
+			}
+			else
+			{
+				UART_Transmit(&huart0, "Invalid command. Use r, g, b, o, or s.\r\n", 40);
+			}
+			UART_Receive_IT(&huart0, &rx, 1);
+		}
+	}
+}

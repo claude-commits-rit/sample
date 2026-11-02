@@ -1,0 +1,116 @@
+Q8. MULTI TIMER RGB INDICATOR
+==============================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Source     : class RISC-V practice sheet, Question 8
+
+Configure all three timers in periodic interrupt mode:
+
+- Timer 0: 250 ms period
+- Timer 1: 500 ms period
+- Timer 2: 750 ms period
+
+Implement TIMER_ElapsedCallback() so that:
+- Timer 0 toggles the red LED.
+- Timer 1 toggles the green LED.
+- Timer 2 toggles the blue LED.
+
+Transmit a UART message identifying which timer elapsed. Keep the callback
+short and avoid delayms() inside the interrupt callback.
+
+In the lab report, explain how the callback identifies the timer using the
+TIMER_Handle_t pointer.
+
+Required concepts:
+- htimer0, htimer1, and htimer2
+- multiple timer interrupt sources
+- callback dispatch
+- GPIO and UART operations from an interrupt-driven design
+
+Reference example:
+- examples/Timer/TimerInterrupt/timer_int.c
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+
+#define MILLIS(ms) ((uint32_t)((ms) * 100000UL))
+
+volatile uint8_t t0 =0;
+volatile uint8_t t1 =0;
+volatile uint8_t t2 =0;
+
+/* the SDK passes the handle that fired; compare it with &htimer0/1/2 */
+void TIMER_ElapsedCallback(TIMER_Handle_t *htimer)
+{
+	if(htimer == &htimer0)
+	{
+		GPIO_TogglePin(GPIOB, RGB_RED);
+		t0 =1;
+	}
+	else if(htimer == &htimer1)
+	{
+		GPIO_TogglePin(GPIOB, RGB_GREEN);
+		t1 =1;
+	}
+	else if(htimer == &htimer2)
+	{
+		GPIO_TogglePin(GPIOB, RGB_BLUE);
+		t2 =1;
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_GREEN, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_BLUE, GPIO_OUT);
+	RGB_RED_RST;
+	RGB_GREEN_RST;
+	RGB_BLUE_RST;
+	UART_Init(&huart0);
+
+	htimer0.LoadCount = MILLIS(250);
+	htimer1.LoadCount = MILLIS(500);
+	htimer2.LoadCount = MILLIS(750);
+	TIMER_Init(&htimer0);
+	TIMER_Init(&htimer1);
+	TIMER_Init(&htimer2);
+	TIMER_Start_IT(&htimer0);
+	TIMER_Start_IT(&htimer1);
+	TIMER_Start_IT(&htimer2);
+
+	while(1)
+	{
+		if(t0)
+		{
+			t0 =0;
+			UART_Transmit(&huart0, "Timer 0 elapsed (red)\r\n", 23);
+		}
+		if(t1)
+		{
+			t1 =0;
+			UART_Transmit(&huart0, "Timer 1 elapsed (green)\r\n", 25);
+		}
+		if(t2)
+		{
+			t2 =0;
+			UART_Transmit(&huart0, "Timer 2 elapsed (blue)\r\n", 24);
+		}
+	}
+}

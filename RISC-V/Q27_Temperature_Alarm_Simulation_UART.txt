@@ -1,0 +1,126 @@
+Q27. TEMPERATURE ALARM SIMULATION UART
+======================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+Simulate a temperature sensor: the user types numbers (0-99) + Enter as the
+"temperature". 0-29 green, 30-49 blue, 50+ red blinking at 200 ms with
+"ALARM". Print "Temp = NN, Status = <OK/WARM/ALARM>".
+
+Tasks:
+1. Line reception by interrupt; atoi().
+2. Timer 0 handles the alarm blink only in ALARM state.
+3. BTN0 acknowledges the alarm (stops blinking, red stays ON).
+
+Doubts:
+- How is a state machine used to keep the blink and acknowledge logic clean?
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#define MILLIS(ms) ((uint32_t)((ms) * 100000UL))
+
+char rx;
+char num[8];
+uint8_t idx =0;
+volatile uint8_t got =0;
+volatile uint8_t alarm =0;   /* 1 = blinking */
+char msg[48];
+
+void UART_RxCpltCallback(UART_Handle_t *huart)
+{
+	got =1;
+}
+
+void TIMER_ElapsedCallback(TIMER_Handle_t *htimer)
+{
+	if(htimer == &htimer0 && alarm)
+	{
+		GPIO_TogglePin(GPIOB, RGB_RED);
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_GREEN, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_BLUE, GPIO_OUT);
+	RGB_RED_RST;
+	RGB_GREEN_RST;
+	RGB_BLUE_RST;
+	GPIO_Init(GPIOB, BTN0, GPIO_IN);
+	UART_Init(&huart0);
+	htimer0.LoadCount = MILLIS(200);
+	TIMER_Init(&htimer0);
+	TIMER_Start_IT(&htimer0);
+	UART_Receive_IT(&huart0, &rx, 1);
+
+	while(1)
+	{
+		if(alarm && GPIO_ReadPin(GPIOB, BTN0) == 0)   /* acknowledge */
+		{
+			alarm =0;
+			RGB_RED_RST;
+			RGB_GREEN_RST;
+			RGB_BLUE_RST;
+			RGB_RED_SET;
+			UART_Transmit(&huart0, "Alarm acknowledged\r\n", 20);
+		}
+
+		if(got)
+		{
+			got =0;
+			if(rx == '\r')
+			{
+				num[idx] = 0;
+				idx=0;
+				int t = atoi(num);
+				RGB_RED_RST;
+				RGB_GREEN_RST;
+				RGB_BLUE_RST;
+				if(t < 30)
+				{
+					alarm =0;
+					RGB_GREEN_SET;
+					sprintf(msg, "Temp = %d, Status = OK\r\n", t);
+				}
+				else if(t < 50)
+				{
+					alarm =0;
+					RGB_BLUE_SET;
+					sprintf(msg, "Temp = %d, Status = WARM\r\n", t);
+				}
+				else
+				{
+					alarm =1;
+					sprintf(msg, "Temp = %d, Status = ALARM\r\n", t);
+				}
+				UART_Transmit(&huart0, msg, strlen(msg));
+			}
+			else if(rx >= '0' && rx <= '9' && idx < 7)
+			{
+				num[idx++] = rx;
+			}
+			UART_Receive_IT(&huart0, &rx, 1);
+		}
+	}
+}

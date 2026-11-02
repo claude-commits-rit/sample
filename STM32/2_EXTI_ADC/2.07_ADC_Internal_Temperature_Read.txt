@@ -1,0 +1,192 @@
+2.7  ADC INTERNAL TEMPERATURE READ
+==================================
+
+Board      : STM32F407G-DISC1 (Discovery)
+Tool       : STM32CubeIDE, HAL
+Clock      : HSI 16 MHz (timer clock 16 MHz) unless stated
+Debug      : SYS -> Serial Wire, always
+Onboard    : PD12 green, PD13 orange, PD14 red, PD15 blue, PA0 user button
+             (HIGH when pressed), LIS3DSH accelerometer on SPI1
+             (PA5 SCK, PA6 MISO, PA7 MOSI, PE3 CS), internal ADC temp/VREFINT
+
+Scenario:
+Read the internal temperature sensor once every 500 ms and show its level on
+the LEDs.
+
+Tasks:
+1. Enable ADC1 with the Temperature Sensor channel, 12-bit, long sampling time
+   (480 cycles).
+2. Use HAL_ADC_Start(), HAL_ADC_PollForConversion(), HAL_ADC_GetValue().
+3. Store the raw value in a variable and watch it in Live Expressions.
+4. Light 1 to 4 LEDs depending on which quarter of 0-4095 the value is in.
+
+Doubts to answer:
+- Step size = Vref / 2^n. What is it for 12 bits and 3.3 V?
+- Why does an internal channel need a long sampling time?
+
+======================================================================
+SOLUTION
+======================================================================
+
+STEP 1 - CubeMX (.ioc) settings
+------------------------------------------------------------
+SYS               | Debug = Serial Wire
+RCC               | default (HSI 16 MHz)
+PD12-PD15         | GPIO_Output
+ADC1              | Temperature Sensor Channel ON, 12-bit, Continuous OFF
+ADC1 Rank 1       | Channel Temperature Sensor, Sampling time 480 cycles
+------------------------------------------------------------
+
+STEP 2 - replace the WHOLE Core/Src/main.c with the code below
+------------------------------------------------------------
+/* ============================================================
+   2.7 - complete main.c for STM32F407G-DISC1
+   1. New STM32 project -> Board Selector -> STM32F4DISCOVERY.
+      "Initialize all peripherals with their default mode?" -> NO.
+   2. In the .ioc apply the CubeMX table of this question, save (Ctrl+S)
+      so CubeIDE generates the HAL drivers, msp and interrupt files.
+   3. Open Core/Src/main.c, select all, paste this whole file. Build.
+   ------------------------------------------------------------
+Step size: 3.3 V / 4096 = 0.806 mV per count.
+   ============================================================ */
+#include "main.h"
+
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+ADC_HandleTypeDef hadc1;
+
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* USER CODE BEGIN PV */
+volatile uint32_t raw =0;
+/* USER CODE END PV */
+
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_ADC1_Init(void);
+
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_ADC1_Init();
+
+    /* USER CODE BEGIN 2 */
+
+    /* USER CODE END 2 */
+
+    while (1)
+    {
+    /* USER CODE BEGIN 3 */
+	HAL_ADC_Start(&hadc1);
+	HAL_ADC_PollForConversion(&hadc1, 10);
+	raw = HAL_ADC_GetValue(&hadc1);
+	HAL_ADC_Stop(&hadc1);
+
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, 0);
+	if(raw < 1024)
+	{
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, 1);
+	}
+	else if(raw < 2048)
+	{
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_13, 1);
+	}
+	else if(raw < 3072)
+	{
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14, 1);
+	}
+	else
+	{
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, 1);
+	}
+	HAL_Delay(500);
+    /* USER CODE END 3 */
+    }
+}
+
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+}
+
+static void MX_ADC1_Init(void)
+{
+    ADC_ChannelConfTypeDef sConfig = {0};
+
+    hadc1.Instance = ADC1;
+    hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+    hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+    hadc1.Init.ScanConvMode = DISABLE;
+    hadc1.Init.ContinuousConvMode = DISABLE;
+    hadc1.Init.DiscontinuousConvMode = DISABLE;
+    hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+    hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+    hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+    hadc1.Init.NbrOfConversion = 1;
+    hadc1.Init.DMAContinuousRequests = DISABLE;
+    hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+    if (HAL_ADC_Init(&hadc1) != HAL_OK) Error_Handler();
+
+    sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+    sConfig.Rank = 1;
+    sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
+    if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) Error_Handler();
+}
+
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
+void Error_Handler(void)
+{
+    __disable_irq();
+    while (1) { }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line) { }
+#endif

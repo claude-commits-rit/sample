@@ -1,0 +1,164 @@
+3.4  PWM SMOOTH FADE
+====================
+
+Board      : STM32F407G-DISC1 (Discovery)
+Tool       : STM32CubeIDE, HAL
+Clock      : HSI 16 MHz (timer clock 16 MHz) unless stated
+Debug      : SYS -> Serial Wire, always
+Onboard    : PD12 green, PD13 orange, PD14 red, PD15 blue, PA0 user button
+             (HIGH when pressed), LIS3DSH accelerometer on SPI1
+             (PA5 SCK, PA6 MISO, PA7 MOSI, PE3 CS), internal ADC temp/VREFINT
+
+Source: Assignment 3, Q2
+An LED on TIM4 Channel 1 (PD12) must smoothly fade from minimum to maximum
+brightness and back. 1 kHz PWM, 16 MHz timer clock. Vary the duty cycle in
+software (main loop). Explain how duty cycle controls brightness.
+
+======================================================================
+SOLUTION
+======================================================================
+
+STEP 1 - CubeMX (.ioc) settings
+------------------------------------------------------------
+SYS               | Debug = Serial Wire
+RCC               | default (HSI 16 MHz)
+TIM4              | Channel1 = PWM Generation CH1 (PD12), PSC 15, ARR 999
+------------------------------------------------------------
+
+STEP 2 - replace the WHOLE Core/Src/main.c with the code below
+------------------------------------------------------------
+/* ============================================================
+   3.4 - complete main.c for STM32F407G-DISC1
+   1. New STM32 project -> Board Selector -> STM32F4DISCOVERY.
+      "Initialize all peripherals with their default mode?" -> NO.
+   2. In the .ioc apply the CubeMX table of this question, save (Ctrl+S)
+      so CubeIDE generates the HAL drivers, msp and interrupt files.
+   3. Open Core/Src/main.c, select all, paste this whole file. Build.
+   ------------------------------------------------------------
+Duty = CCR / (ARR + 1). Higher duty = LED ON for a longer part of each 1 ms
+cycle = higher average power = brighter.
+   ============================================================ */
+#include "main.h"
+
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+TIM_HandleTypeDef htim4;
+
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
+
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_TIM4_Init(void);
+
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_TIM4_Init();
+
+    /* USER CODE BEGIN 2 */
+	HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+    /* USER CODE END 2 */
+
+    while (1)
+    {
+    /* USER CODE BEGIN 3 */
+	for(int ccr=0 ; ccr<=999 ; ccr+=5)
+	{
+		__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, ccr);
+		HAL_Delay(5);
+	}
+	for(int ccr=999 ; ccr>=0 ; ccr-=5)
+	{
+		__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, ccr);
+		HAL_Delay(5);
+	}
+    /* USER CODE END 3 */
+    }
+}
+
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+
+}
+
+static void MX_TIM4_Init(void)
+{
+    TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+    TIM_MasterConfigTypeDef sMasterConfig = {0};
+    TIM_OC_InitTypeDef sConfigOC = {0};
+
+    htim4.Instance = TIM4;
+    htim4.Init.Prescaler = 15;
+    htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim4.Init.Period = 999;
+    htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if (HAL_TIM_Base_Init(&htim4) != HAL_OK) Error_Handler();
+    sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+    if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK) Error_Handler();
+    if (HAL_TIM_PWM_Init(&htim4) != HAL_OK) Error_Handler();
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+    sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+    if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK) Error_Handler();
+    sConfigOC.OCMode = TIM_OCMODE_PWM1;
+    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+    sConfigOC.Pulse = 0;
+    if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
+    HAL_TIM_MspPostInit(&htim4);
+}
+
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
+void Error_Handler(void)
+{
+    __disable_irq();
+    while (1) { }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line) { }
+#endif

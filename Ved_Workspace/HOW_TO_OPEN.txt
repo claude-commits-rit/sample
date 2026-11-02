@@ -1,0 +1,13 @@
+VED WORKSPACE - full STM32CubeIDE projects (from github.com/vedsurwade/ved_microu, branch arm)
+
+Removed to keep it small: Debug/ (build output), Drivers/ (HAL library), .metadata.
+CubeIDE makes them again.
+
+To open one project:
+1. STM32CubeIDE -> File -> Import -> General -> Existing Projects into Workspace.
+2. Select the project folder (example: TIM_Q1) -> Finish.
+3. Double-click the .ioc -> Ctrl+S (Generate Code). This brings back Drivers/.
+4. Build (hammer icon) -> Run / Debug.
+
+QUESTIONS.txt says which question each folder solves.
+RISC_V/ : put Makefile + .c in a folder under Lyra examples, then make / make flash.

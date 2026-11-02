@@ -1,0 +1,132 @@
+Q24. LED PATTERN PLAYER FROM ARRAY
+==================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+Play an LED pattern stored in an array, e.g.
+    {R, G, B, RG, GB, RB, RGB, OFF}, one step every 250 ms.
+BTN0 pauses/resumes, BTN1 reverses the direction.
+
+Tasks:
+1. Store the pattern as bit masks (bit0 R, bit1 G, bit2 B).
+2. Timer 0 interrupt steps an index (wrap around both directions).
+3. Buttons polled in main with debounce; print "Paused" / "Reverse".
+
+Doubts:
+- How do you wrap the index when going backwards from 0?
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+
+#define MILLIS(ms) ((uint32_t)((ms) * 100000UL))
+
+/* bit0 R, bit1 G, bit2 B : R, G, B, RG, GB, RB, RGB, OFF */
+uint8_t pattern[8] = {1, 2, 4, 3, 6, 5, 7, 0};
+volatile int idx =0;
+volatile int dir =1;
+volatile uint8_t paused =0;
+int p0 =1;
+int p1 =1;
+
+void TIMER_ElapsedCallback(TIMER_Handle_t *htimer)
+{
+	if(htimer == &htimer0 && paused == 0)
+	{
+		idx = idx + dir;
+		if(idx > 7)
+		{
+			idx =0;
+		}
+		else if(idx < 0)
+		{
+			idx =7;
+		}
+		uint8_t m = pattern[idx];
+		if(m & 1)
+		{
+			RGB_RED_SET;
+		}
+		else
+		{
+			RGB_RED_RST;
+		}
+		if(m & 2)
+		{
+			RGB_GREEN_SET;
+		}
+		else
+		{
+			RGB_GREEN_RST;
+		}
+		if(m & 4)
+		{
+			RGB_BLUE_SET;
+		}
+		else
+		{
+			RGB_BLUE_RST;
+		}
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_GREEN, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_BLUE, GPIO_OUT);
+	GPIO_Init(GPIOB, BTN0, GPIO_IN);
+	GPIO_Init(GPIOB, BTN1, GPIO_IN);
+	UART_Init(&huart0);
+	htimer0.LoadCount = MILLIS(250);
+	TIMER_Init(&htimer0);
+	TIMER_Start_IT(&htimer0);
+
+	while(1)
+	{
+		int b0 = GPIO_ReadPin(GPIOB, BTN0);
+		int b1 = GPIO_ReadPin(GPIOB, BTN1);
+		if(p0 == 1 && b0 == 0)
+		{
+			if(paused == 0)
+			{
+				paused =1;
+			}
+			else
+			{
+				paused =0;
+			}
+			if(paused)
+			{
+				UART_Transmit(&huart0, "Paused\r\n", 8);
+			}
+			else
+			{
+				UART_Transmit(&huart0, "Resumed\r\n", 9);
+			}
+		}
+		if(p1 == 1 && b1 == 0)
+		{
+			dir = -dir;
+			UART_Transmit(&huart0, "Reverse\r\n", 9);
+		}
+		p0 =b0;
+		p1 =b1;
+		delayms(30);
+	}
+}

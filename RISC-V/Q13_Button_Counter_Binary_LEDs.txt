@@ -1,0 +1,115 @@
+Q13. BUTTON COUNTER BINARY LEDS
+===============================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+Every press of BTN0 adds 1, every press of BTN1 subtracts 1 (range 0-7).
+Show the value in binary on RGB: bit0 red, bit1 green, bit2 blue.
+Print "Count = N" after every change.
+
+Tasks:
+1. Poll both buttons (active-low) and detect presses (1 -> 0 change).
+2. Debounce 50 ms with delayms().
+3. Do not go below 0 or above 7; print "Limit" at the ends.
+
+Doubts:
+- How do you turn a number into 3 separate LED states with & and >>?
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+#include <stdio.h>
+#include <string.h>
+
+int count =0;
+int p0 =1;
+int p1 =1;
+char msg[32];
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_GREEN, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_BLUE, GPIO_OUT);
+	GPIO_Init(GPIOB, BTN0, GPIO_IN);
+	GPIO_Init(GPIOB, BTN1, GPIO_IN);
+	UART_Init(&huart0);
+
+	while(1)
+	{
+		int b0 = GPIO_ReadPin(GPIOB, BTN0);
+		int b1 = GPIO_ReadPin(GPIOB, BTN1);
+
+		if(p0 == 1 && b0 == 0)   /* BTN0 pressed */
+		{
+			if(count < 7)
+			{
+				count++;
+			}
+			else
+			{
+				UART_Transmit(&huart0, "Limit\r\n", 7);
+			}
+			sprintf(msg, "Count = %d\r\n", count);
+			UART_Transmit(&huart0, msg, strlen(msg));
+		}
+		if(p1 == 1 && b1 == 0)   /* BTN1 pressed */
+		{
+			if(count > 0)
+			{
+				count--;
+			}
+			else
+			{
+				UART_Transmit(&huart0, "Limit\r\n", 7);
+			}
+			sprintf(msg, "Count = %d\r\n", count);
+			UART_Transmit(&huart0, msg, strlen(msg));
+		}
+		p0 =b0;
+		p1 =b1;
+
+		/* bit0 red, bit1 green, bit2 blue */
+		if(count & 1)
+		{
+			RGB_RED_SET;
+		}
+		else
+		{
+			RGB_RED_RST;
+		}
+		if(count & 2)
+		{
+			RGB_GREEN_SET;
+		}
+		else
+		{
+			RGB_GREEN_RST;
+		}
+		if(count & 4)
+		{
+			RGB_BLUE_SET;
+		}
+		else
+		{
+			RGB_BLUE_RST;
+		}
+
+		delayms(50);   /* debounce */
+	}
+}

@@ -1,0 +1,107 @@
+Q15. SOFTWARE PWM BREATHING LED
+===============================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+Make the green LED "breathe" (fade in and out) using software PWM.
+
+Tasks:
+1. Timer 0 interrupt every 0.1 ms (LoadCount = MICROS(100), MICROS(t) = t*100).
+2. A counter 0-99 makes a 10 ms PWM period; LED ON while counter < duty.
+3. Every 20 ms change duty by 1, up to 100 then back to 0.
+4. Print the duty over UART every time it reaches 0 or 100.
+
+Doubts:
+- Why is the LED logic inverted (active-low) when duty is high?
+- What is the PWM frequency you created?
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+#include <stdio.h>
+#include <string.h>
+
+#define MICROS(us) ((uint32_t)((us) * 100UL))
+
+/* timer every 100 us; counter 0..99 -> PWM period 10 ms (100 Hz) */
+volatile int cnt =0;
+volatile int duty =0;
+volatile int dir =1;
+volatile int step =0;
+volatile uint8_t edge =0;
+char msg[32];
+
+void TIMER_ElapsedCallback(TIMER_Handle_t *htimer)
+{
+	if(htimer == &htimer0)
+	{
+		if(cnt < duty)
+		{
+			RGB_GREEN_SET;
+		}
+		else
+		{
+			RGB_GREEN_RST;
+		}
+		cnt++;
+		if(cnt >= 100)
+		{
+			cnt =0;
+		}
+
+		step++;
+		if(step >= 200)   /* 200 x 100 us = 20 ms */
+		{
+			step =0;
+			duty = duty + dir;
+			if(duty >= 100)
+			{
+				duty =100;
+				dir =-1;
+				edge =1;
+			}
+			else if(duty <= 0)
+			{
+				duty =0;
+				dir =1;
+				edge =1;
+			}
+		}
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_GREEN, GPIO_OUT);
+	RGB_GREEN_RST;
+	UART_Init(&huart0);
+
+	htimer0.LoadCount = MICROS(100);
+	TIMER_Init(&htimer0);
+	TIMER_Start_IT(&htimer0);
+
+	while(1)
+	{
+		if(edge)
+		{
+			edge =0;
+			sprintf(msg, "Duty %d%%\r\n", duty);
+			UART_Transmit(&huart0, msg, strlen(msg));
+		}
+	}
+}

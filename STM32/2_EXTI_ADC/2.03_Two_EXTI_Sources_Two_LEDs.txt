@@ -1,0 +1,163 @@
+2.3  TWO EXTI SOURCES TWO LEDS
+==============================
+
+Board      : STM32F407G-DISC1 (Discovery)
+Tool       : STM32CubeIDE, HAL
+Clock      : HSI 16 MHz (timer clock 16 MHz) unless stated
+Debug      : SYS -> Serial Wire, always
+Onboard    : PD12 green, PD13 orange, PD14 red, PD15 blue, PA0 user button
+             (HIGH when pressed), LIS3DSH accelerometer on SPI1
+             (PA5 SCK, PA6 MISO, PA7 MOSI, PE3 CS), internal ADC temp/VREFINT
+
+Source: Assignment 2, Q3
+Configure two external GPIO interrupt sources and use each to control a
+different LED:
+  PA0 (User button, EXTI0)       -> toggles PD12
+  PA1 (external button, EXTI1)   -> toggles PD15
+Wiring for PA1: button between 3V and PA1 (internal pull-down enabled).
+
+======================================================================
+SOLUTION
+======================================================================
+
+STEP 1 - CubeMX (.ioc) settings
+------------------------------------------------------------
+SYS               | Debug = Serial Wire
+RCC               | default (HSI 16 MHz)
+PD12, PD15        | GPIO_Output
+PA0               | GPIO_EXTI0, Rising edge, No pull
+PA1               | GPIO_EXTI1, Rising edge, Pull-down
+NVIC              | EXTI line0 and EXTI line1 interrupts ON
+------------------------------------------------------------
+
+STEP 2 - replace the WHOLE Core/Src/main.c with the code below
+------------------------------------------------------------
+/* ============================================================
+   2.3 - complete main.c for STM32F407G-DISC1
+   1. New STM32 project -> Board Selector -> STM32F4DISCOVERY.
+      "Initialize all peripherals with their default mode?" -> NO.
+   2. In the .ioc apply the CubeMX table of this question, save (Ctrl+S)
+      so CubeIDE generates the HAL drivers, msp and interrupt files.
+   3. Open Core/Src/main.c, select all, paste this whole file. Build.
+   ------------------------------------------------------------
+
+   ============================================================ */
+#include "main.h"
+
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* USER CODE BEGIN PV */
+uint32_t last0 =0;
+uint32_t last1 =0;
+/* USER CODE END PV */
+
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+
+    /* USER CODE BEGIN 2 */
+
+    /* USER CODE END 2 */
+
+    while (1)
+    {
+    /* USER CODE BEGIN 3 */
+
+    /* USER CODE END 3 */
+    }
+}
+
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_15, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_15;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_0;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_1;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    HAL_NVIC_SetPriority(EXTI1_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(EXTI1_IRQn);
+}
+
+/* USER CODE BEGIN 4 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	uint32_t now = HAL_GetTick();
+	if(GPIO_Pin == GPIO_PIN_0 && now-last0>200)
+	{
+		last0 =now;
+		HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_12);
+	}
+	else if(GPIO_Pin == GPIO_PIN_1 && now-last1>200)
+	{
+		last1 =now;
+		HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_15);
+	}
+}
+/* USER CODE END 4 */
+
+void Error_Handler(void)
+{
+    __disable_irq();
+    while (1) { }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line) { }
+#endif

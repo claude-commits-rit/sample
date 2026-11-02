@@ -1,0 +1,111 @@
+Q29. HEARTBEAT WATCHDOG SIMULATION
+==================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+Software watchdog: main must set a "heartbeat" flag at least every 1 s.
+Timer 1 (1 s) checks it: if set -> clear it, green blink; if not -> print
+"SYSTEM HANG", red ON. BTN0 held simulates a hang (main stops setting the
+flag). Releasing BTN0 recovers.
+
+Tasks:
+1. Timer 0 (100 ms) normal work: toggle LED_2.
+2. Main sets heartbeat each loop unless BTN0 is held.
+3. Timer 1 callback checks/clears; printing via a flag in main.
+
+Doubts:
+- How is this similar to the STM32 IWDG, and how is it different?
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+
+#define MILLIS(ms) ((uint32_t)((ms) * 100000UL))
+
+volatile uint8_t heartbeat =0;
+volatile uint8_t check =0;
+volatile uint8_t hang =0;
+
+void TIMER_ElapsedCallback(TIMER_Handle_t *htimer)
+{
+	if(htimer == &htimer0)
+	{
+		GPIO_TogglePin(GPIOB, LED_2);   /* normal work */
+	}
+	else if(htimer == &htimer1)
+	{
+		if(heartbeat == 0)
+		{
+			hang =1;
+		}
+		else
+		{
+			hang =0;
+		}
+		heartbeat =0;
+		check =1;
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_GREEN, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_BLUE, GPIO_OUT);
+	RGB_RED_RST;
+	RGB_GREEN_RST;
+	RGB_BLUE_RST;
+	GPIO_Init(GPIOB, LED_2, GPIO_OUT);
+	GPIO_Init(GPIOB, BTN0, GPIO_IN);
+	UART_Init(&huart0);
+	htimer0.LoadCount = MILLIS(100);
+	htimer1.LoadCount = MILLIS(1000);
+	TIMER_Init(&htimer0);
+	TIMER_Init(&htimer1);
+	TIMER_Start_IT(&htimer0);
+	TIMER_Start_IT(&htimer1);
+
+	while(1)
+	{
+		if(GPIO_ReadPin(GPIOB, BTN0) != 0)   /* button not held = healthy */
+		{
+			heartbeat =1;
+		}
+
+		if(check)
+		{
+			check =0;
+			RGB_RED_RST;
+			RGB_GREEN_RST;
+			RGB_BLUE_RST;
+			if(hang)
+			{
+				RGB_RED_SET;
+				UART_Transmit(&huart0, "SYSTEM HANG\r\n", 13);
+			}
+			else
+			{
+				RGB_GREEN_SET;
+				delayms(50);
+				RGB_GREEN_RST;
+			}
+		}
+	}
+}
+/* Like IWDG: a timeout catches a stuck main. Unlike IWDG: it only reports,
+   it does not reset the chip. */

@@ -1,0 +1,245 @@
+4.9  UART CONTROLLED PWM BRIGHTNESS
+===================================
+
+Board      : STM32F407G-DISC1 (Discovery)
+Tool       : STM32CubeIDE, HAL
+Clock      : HSI 16 MHz (timer clock 16 MHz) unless stated
+Debug      : SYS -> Serial Wire, always
+Onboard    : PD12 green, PD13 orange, PD14 red, PD15 blue, PA0 user button
+             (HIGH when pressed), LIS3DSH accelerometer on SPI1
+             (PA5 SCK, PA6 MISO, PA7 MOSI, PE3 CS), internal ADC temp/VREFINT
+UART       : USART2, PA2 = TX, PA3 = RX, 115200 8N1, no flow control.
+             The Discovery has no USB-serial, so connect a USB-TTL adapter
+             (adapter TX -> PA3, adapter RX -> PA2, GND -> GND, 3.3 V logic).
+
+Scenario:
+Type a number 0-100 and Enter; the green LED (TIM4 CH1 PWM, PD12) changes to
+that brightness. '+' and '-' step the brightness by 10%.
+
+Tasks:
+1. TIM4 CH1 PWM, 1 kHz (PSC 15, ARR 999).
+2. Collect digits until Enter, convert with atoi().
+3. Convert percent to CCR and update with __HAL_TIM_SET_COMPARE().
+4. Reply "Duty = NN%, CCR = NNN". Reject values above 100.
+
+Doubts to answer:
+- Formula from percent to CCR for ARR = 999?
+- Why must values > 100 be rejected?
+
+======================================================================
+SOLUTION
+======================================================================
+
+STEP 1 - CubeMX (.ioc) settings
+------------------------------------------------------------
+SYS               | Debug = Serial Wire
+RCC               | default (HSI 16 MHz)
+USART2            | Asynchronous, 115200, 8N1 (PA2 TX, PA3 RX)
+USART2 NVIC       | USART2 global interrupt ON (if using _IT)
+TIM4              | Channel1 = PWM Generation CH1 (PD12), PSC 15, ARR 999
+------------------------------------------------------------
+
+STEP 2 - replace the WHOLE Core/Src/main.c with the code below
+------------------------------------------------------------
+/* ============================================================
+   4.9 - complete main.c for STM32F407G-DISC1
+   1. New STM32 project -> Board Selector -> STM32F4DISCOVERY.
+      "Initialize all peripherals with their default mode?" -> NO.
+   2. In the .ioc apply the CubeMX table of this question, save (Ctrl+S)
+      so CubeIDE generates the HAL drivers, msp and interrupt files.
+   3. Open Core/Src/main.c, select all, paste this whole file. Build.
+   ------------------------------------------------------------
+CCR = percent x 10  (ARR + 1 = 1000)
+   ============================================================ */
+#include "main.h"
+
+/* USER CODE BEGIN Includes */
+#include<stdio.h>
+#include<string.h>
+#include<stdlib.h>
+/* USER CODE END Includes */
+
+UART_HandleTypeDef huart2;
+TIM_HandleTypeDef htim4;
+
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* USER CODE BEGIN PV */
+uint8_t rx;
+volatile uint8_t got =0;
+char num[8];
+uint8_t idx =0;
+int duty =0;
+char msg[40];
+/* USER CODE END PV */
+
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_TIM4_Init(void);
+
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_USART2_UART_Init();
+    MX_TIM4_Init();
+
+    /* USER CODE BEGIN 2 */
+	HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+	HAL_UART_Receive_IT(&huart2, &rx, 1);
+    /* USER CODE END 2 */
+
+    while (1)
+    {
+    /* USER CODE BEGIN 3 */
+	if(got)
+	{
+		got =0;
+		int newd =-1;
+		if(rx == '+')
+		{
+			newd = duty + 10;
+			if(newd > 100)
+			{
+				newd =100;
+			}
+		}
+		else if(rx == '-')
+		{
+			newd = duty - 10;
+			if(newd < 0)
+			{
+				newd =0;
+			}
+		}
+		else if(rx == '\r')
+		{
+			num[idx] = 0;
+			idx=0;
+			int v = atoi(num);
+			if(v >= 0 && v <= 100)
+			{
+				newd =v;
+			}
+			else
+			{
+				HAL_UART_Transmit(&huart2, (uint8_t*)"Use 0-100\r\n", 11, 100);
+			}
+		}
+		else if(rx >= '0' && rx <= '9' && idx < 7)
+		{
+			num[idx++] = rx;
+		}
+
+		if(newd >= 0)
+		{
+			duty =newd;
+			__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, duty*10);
+			sprintf(msg, "Duty = %d%%, CCR = %d\r\n", duty, duty*10);
+			HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+		}
+		HAL_UART_Receive_IT(&huart2, &rx, 1);
+	}
+    /* USER CODE END 3 */
+    }
+}
+
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+
+}
+
+static void MX_USART2_UART_Init(void)
+{
+    huart2.Instance = USART2;
+    huart2.Init.BaudRate = 115200;
+    huart2.Init.WordLength = UART_WORDLENGTH_8B;
+    huart2.Init.StopBits = UART_STOPBITS_1;
+    huart2.Init.Parity = UART_PARITY_NONE;
+    huart2.Init.Mode = UART_MODE_TX_RX;
+    huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+    if (HAL_UART_Init(&huart2) != HAL_OK) Error_Handler();
+}
+
+static void MX_TIM4_Init(void)
+{
+    TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+    TIM_MasterConfigTypeDef sMasterConfig = {0};
+    TIM_OC_InitTypeDef sConfigOC = {0};
+
+    htim4.Instance = TIM4;
+    htim4.Init.Prescaler = 15;
+    htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim4.Init.Period = 999;
+    htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if (HAL_TIM_Base_Init(&htim4) != HAL_OK) Error_Handler();
+    sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+    if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK) Error_Handler();
+    if (HAL_TIM_PWM_Init(&htim4) != HAL_OK) Error_Handler();
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+    sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+    if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK) Error_Handler();
+    sConfigOC.OCMode = TIM_OCMODE_PWM1;
+    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+    sConfigOC.Pulse = 0;
+    if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
+    HAL_TIM_MspPostInit(&htim4);
+}
+
+/* USER CODE BEGIN 4 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if(huart->Instance == USART2)
+	{
+		got =1;
+	}
+}
+/* USER CODE END 4 */
+
+void Error_Handler(void)
+{
+    __disable_irq();
+    while (1) { }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line) { }
+#endif

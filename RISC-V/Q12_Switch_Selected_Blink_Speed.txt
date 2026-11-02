@@ -1,0 +1,105 @@
+Q12. SWITCH SELECTED BLINK SPEED
+================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+SWITCH0 and SWITCH1 choose the blink speed of the red LED:
+    00 -> off, 01 -> 1000 ms, 10 -> 500 ms, 11 -> 100 ms.
+Print "Speed changed: NNN ms" whenever the switches change.
+
+Tasks:
+1. Read both switches with GPIO_ReadPin() (polling).
+2. Use Timer 0 interrupt for the blinking; change LoadCount when the
+   setting changes (stop, re-init, start).
+3. Detect a change by comparing with the previous switch value.
+
+Doubts:
+- Why must the timer be stopped before changing LoadCount?
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+#include <stdio.h>
+#include <string.h>
+
+#define MILLIS(ms) ((uint32_t)((ms) * 100000UL))
+
+/* Assumption: a switch reads 1 when ON. If opposite, swap 0/1 below. */
+int prev =-1;
+int speed =0;
+char msg[40];
+
+void TIMER_ElapsedCallback(TIMER_Handle_t *htimer)
+{
+	if(htimer == &htimer0)
+	{
+		GPIO_TogglePin(GPIOB, RGB_RED);
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	RGB_RED_RST;
+	GPIO_Init(GPIOB, SWITCH0, GPIO_IN);
+	GPIO_Init(GPIOB, SWITCH1, GPIO_IN);
+	UART_Init(&huart0);
+
+	while(1)
+	{
+		int s0 = GPIO_ReadPin(GPIOB, SWITCH0);
+		int s1 = GPIO_ReadPin(GPIOB, SWITCH1);
+		int sel = s1*2 + s0;   /* 0..3 */
+
+		if(sel != prev)
+		{
+			prev =sel;
+			if(sel == 0)
+			{
+				speed =0;
+			}
+			else if(sel == 1)
+			{
+				speed =1000;
+			}
+			else if(sel == 2)
+			{
+				speed =500;
+			}
+			else
+			{
+				speed =100;
+			}
+
+			TIMER_Stop(&htimer0);
+			if(speed == 0)
+			{
+				RGB_RED_RST;
+			}
+			else
+			{
+				htimer0.LoadCount = MILLIS(speed);
+				TIMER_Init(&htimer0);
+				TIMER_Start_IT(&htimer0);
+			}
+			sprintf(msg, "Speed changed: %d ms\r\n", speed);
+			UART_Transmit(&huart0, msg, strlen(msg));
+		}
+		delayms(20);
+	}
+}

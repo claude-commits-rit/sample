@@ -1,0 +1,196 @@
+VED_MICROU REPO - WHAT QUESTION EACH main.c SOLVES
+Repo: https://github.com/vedsurwade/ved_microu  (branches: main and arm)
+Format: Week / folder in his repo -> question name -> our file -> question
+
+
+WEEK 1 - GPIO (Assignment 1)
+
+GPIO_Q1 -> GPIO_Toggle_Green_LED -> our 1.01
+Toggle the green LED (PD12) every 500 ms.
+
+GPIO_Q2 -> All_Four_LEDs_On_Off -> our 1.02
+Turn all four LEDs (PD12-PD15) ON for 500 ms, then OFF for 500 ms, repeat.
+
+GPIO_Q3 -> Forward_LED_Sequence -> our 1.03
+Toggle PD12, PD13, PD14, PD15 one after another, 500 ms each.
+
+GPIO_Q4 -> Forward_Reverse_Running_LEDs -> our 1.04
+Run the LEDs forward (12 -> 15) then backward (15 -> 12).
+Code is in his own file Clockwise_Anticlockwise.h (forwardReverse()).
+
+GPIO_Q5 -> Button_Hold_LED_On -> our 1.05
+While the user button (PA0) is pressed, PD12 is ON. Released -> OFF.
+
+GPIO_Q1_A -> no code (only an empty project).
+
+
+WEEK 2 - EXTI / NVIC and ADC (Assignment 2)
+
+NVIC_Q1 -> EXTI0_Toggle_LED -> our 2.01
+PA0 as EXTI interrupt. Each press toggles PD12 in the callback.
+
+NVIC_Q2 -> no user code (empty project). Assignment 2 Q2 is our 2.02
+EXTI_Interrupt_Counter.
+
+NVIC_Q3 -> Two_EXTI_Sources_Two_LEDs -> our 2.03
+Two interrupts: PA0 toggles PD12, PA1 toggles PD14.
+
+NVIC_Q4 -> ADC_Single_Conversion_On_Button -> our 2.04
+When PA0 is pressed, start ADC1, poll, read one value into adc_value.
+
+NVIC_Q5 -> ADC_Continuous_Conversion_Pot -> our 2.05
+ADC1 in continuous mode, read adc_value every 1 s.
+
+NVIC_Q6 -> ADC_100_Samples_Avg_Min_Max -> our 2.06
+Take 100 ADC samples, find sum, average, minimum and maximum.
+
+
+WEEK 3 - TIMERS (Assignment 3)
+
+TIM_Q1 -> Traffic_Signal_Timer_Interrupt -> our 3.02
+TIM2 interrupt every 100 ms. Green PD12 for 20 ticks (2 s),
+red PD14 for 10 ticks (1 s), repeat.
+
+TIM_Q2 -> PWM_Brightness_Levels -> our 3.03
+TIM4 CH1 PWM. Change CCR1 through 10 duty values, one every 500 ms.
+
+TIM_Q3 -> Output_Compare_Four_Stage_Sequence -> our 3.06
+TIM4 CH1-CH4 Output Compare toggle mode, started with HAL_TIM_OC_Start
+(no interrupt). Compare values set in the .ioc.
+
+TIM_Q4 -> Output_Compare_Independent_Toggle_Rates -> our 3.07
+TIM4 CH1-CH4 OC interrupts. In the callback the next CCR is set
+(200, 400, 600, 800 steps, % 1000).
+
+TIM_Q5 -> Input_Capture_Button_Interval -> our 3.08
+TIM2 CH1 input capture on PA0. Time between two presses = result
+(handles counter overflow).
+
+STM_Exp/TIMER_Q1..Q5 -> same code as TIM_Q1..Q5.
+
+
+WEEK 4 - UART (Assignment 4)
+
+UART_Q1 -> UART_Hello_Transmit -> our 4.01
+Send "Hello STM32F407" on USART2.
+
+UART_Q2 -> UART_Echo_Polling -> our 4.02
+Receive one character and send it back (polling).
+
+UART_Q3 -> UART_Receive_String_Enter -> our 4.03
+Store characters in a buffer until Enter, then send the whole string back.
+
+UART_Q4 -> UART_LED_ON_OFF_Commands -> our 4.04
+Type "LED ON" or "LED OFF" + Enter -> PD12 ON or OFF.
+
+UART_Q5 -> UART_DMA_32_Byte_Receive -> our 4.05
+Receive 32 bytes with DMA, then send them back (RxCplt callback).
+
+STM_Exp/UART_Q1..Q5 -> another version of the same 5 UART questions.
+STM_Exp/test -> PA0 pressed sends "LED ON", else "LED OFF" on UART
+(his own test, not an assignment question).
+
+
+WEEK 5 - SPI (Assignment 5)
+
+SPI_Q1 -> SPI_Loopback_Test -> our 5.01
+Connect MOSI to MISO. Send 0x55 0xAA 0x00 0xFF, compare received bytes.
+Match -> PD12 (green), mismatch -> PD14 (red).
+
+SPI_1 -> SPI_Accelerometer_XYZ_Continuous_Read -> our 5.03
+Read WHO_AM_I, set CTRL_REG4 = 0x47 and CTRL_REG5 = 0xC0, read 6 bytes
+from 0x28 every 100 ms, make X, Y, Z as 16-bit values.
+
+SPI_Q2 -> SPI_Tilt_Direction_LEDs -> our 5.04
+Read X and Y. X > 1500 -> PD14, X < -1500 -> PD12,
+Y > 1500 -> PD13, Y < -1500 -> PD15.
+
+
+WEEK 6 - I2C (Assignment 6)
+
+I2C_Q1 -> I2C_Master_Slave_LED_Display (new, we skipped I2C)
+Two boards on I2C1. Master: each PA0 press counts 0-4 and sends it to
+slave address 0x1D. Slave: receives the value and shows it on the LEDs
+(LedDisplay.h). Choose the role with #define MASTER or #define SLAVE.
+
+
+EXTRA - IWDG and RTC (practice)
+
+IWDG -> IWDG_Basic_Watchdog_Reset -> our 6.06
+PD14 ON at start. Holding PA0 refreshes the IWDG and toggles PD13.
+Not pressing -> watchdog reset. TIM2 toggles PD12.
+
+RTC -> RTC_Alarm_LED (new)
+PD13 blinks every 1 s. When RTC Alarm A fires, PD12 turns ON
+(HAL_RTC_AlarmAEventCallback). Alarm time set in the .ioc.
+
+
+MIXED-SCENARIO SHEET (class sheet Q1-Q10)
+
+Question_01 -> Traffic_Signal_Timer_Interrupt -> our 3.02 / 7.01
+Green 2 s, red 1 s, 100 ms timer interrupt (he used TIM4).
+
+Question_02 -> PWM_Duty_Range_LED_Indicator -> our 3.05 / 7.02
+1 kHz PWM sweep 0-100-0 %. LEDs show 0-24, 25-49, 50-74, 75-100 %.
+
+Question_03 -> Output_Compare_Four_Stage_Sequence -> our 3.06 / 7.03
+Events at 250, 500, 750, 1000 ms turn on PD12-PD15 (TIM4 OC).
+
+Question_04 -> Output_Compare_Independent_Toggle_Rates -> our 3.07 / 7.04
+PD12 200 ms, PD13 400 ms, PD14 600 ms, PD15 1000 ms (next CCR = CCR + step).
+
+Question_05 -> Input_Capture_Button_Interval -> our 3.08 / 7.05
+Time in ms between two PA0 presses with TIM2 input capture.
+
+Question_06 -> SPI_Tilt_Safety_Monitor -> our 6.01 / 7.06
+Accelerometer tilt LEDs, 3 s tilted -> blink all, 2 s level -> clear.
+
+Question_07 -> ADC_DMA_Internal_Temperature_Monitor -> our 6.02 / 7.07
+Temperature by ADC + DMA, 4 ranges on LEDs, PA0 freeze.
+
+Question_08 -> RTC_Access_Event_Logger -> our 6.03 / 7.08
+Each PA0 press stores RTC time and date in a 5-record buffer.
+
+Question_09 -> DMA_GPIO_BSRR_LED_Pattern_Player -> our 6.05 / 7.09
+TIM1 update -> DMA -> GPIOD->BSRR pattern, PA0 pause / resume.
+
+Question_10 -> IWDG_Fault_Recovery_Controller -> our 6.07 / 7.10
+Heartbeat refresh, hold PA0 3 s -> fault -> reset, PD14 3 s after reset.
+
+
+RISC-V (ARIES v2)
+
+RISC_V/Q1 -> PWM_Duty_Sweep_UART
+PWM duty 0, 10 ... 100 % in steps, print "PWM Duty : x" on UART.
+
+RISC_V/Q1_A -> Button_RGB_Sequence_And_Red_Blink
+BTN0 -> red, green, blue one by one (500 ms). BTN1 -> red blink 200 ms.
+
+RISC_V/Q1_B -> UART_Up_Down_Counter_With_Limit
+'+' adds 1 (max 20), '-' subtracts 1 (min 0), 'r' resets.
+Print "counter : x", else "Limit Reached!".
+
+RISC_V/Q2 -> Button_Selects_Blink_Speed
+Red blinks every 1 s. While BTN0 is held, it blinks every 250 ms.
+
+RISC_V/Q3 -> UART_Single_Digit_Calculator
+Type digit, digit, '+' or '-', Enter (e.g. 35+). Print "Result: x"
+or "Invalid Expression".
+
+RISC_V/Q4 -> Timer_Interrupt_Counter_UART
+Timer0 every 1 s, print "Counter: x", after 10 restart from 0.
+
+RISC_V/Q5 -> UART_Vowel_Counter
+Echo each character, count vowels, print "Vowel Count : x".
+
+RISC_V/Q6 -> Button_Press_Counter_With_Green_Blink
+Count BTN0 presses, print "Button Count : x". Every 5th press blink
+green twice. After 20, restart.
+
+RISC_V/Q7 -> UART_Timed_Blue_LED_5_Seconds
+'o' -> blue LED ON for 5 s (timer counts), then OFF.
+'s' -> print "LED ON | Counter : x" or "LED OFF | Counter : x".
+
+
+EMPTY
+codes -> empty file.  rit_code/sample -> link to another repo, no code.

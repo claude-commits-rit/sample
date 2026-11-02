@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<projectDescription>
+<<<<<<< HEAD
+	<name>ARM</name>
+=======
+	<name>Microcontroller</name>
+>>>>>>> f5f60f27ab779774f50e6eb9e5f4ade35fcb3b1e
+	<comment></comment>
+	<projects>
+	</projects>
+	<buildSpec>
+	</buildSpec>
+	<natures>
+	</natures>
+</projectDescription>

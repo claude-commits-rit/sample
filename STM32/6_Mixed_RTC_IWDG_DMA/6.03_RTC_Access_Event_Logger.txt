@@ -1,0 +1,250 @@
+6.3  RTC ACCESS EVENT LOGGER
+============================
+
+Board      : STM32F407G-DISC1 (Discovery)
+Tool       : STM32CubeIDE, HAL
+Clock      : HSI 16 MHz (timer clock 16 MHz) unless stated
+Debug      : SYS -> Serial Wire, always
+Onboard    : PD12 green, PD13 orange, PD14 red, PD15 blue, PA0 user button
+             (HIGH when pressed), LIS3DSH accelerometer on SPI1
+             (PA5 SCK, PA6 MISO, PA7 MOSI, PE3 CS), internal ADC temp/VREFINT
+
+Source     : class mixed-scenario sheet, Q8 (no external components)
+
+Scenario:
+Use the onboard User button as an access-event request. Every valid press
+must receive an RTC timestamp and be stored in RAM. The LEDs show activity;
+the SWD debugger is used to inspect the stored records. No display or UART
+terminal is required.
+
+Tasks:
+1. Configure the RTC with an initial date and time using an internal clock
+   source such as LSI, so no external crystal or component is required.
+2. Keep PD12 ON in the ready state.
+3. Configure PA0 as an EXTI input and apply software debounce so one physical
+   press creates one event.
+4. For each valid press, increment an event counter, read the RTC date and
+   time, store the record in a RAM ring buffer, and blink PD13 for 500 ms.
+5. Store at least the five most recent event records. Each record must contain
+   an event number and date/time fields.
+6. When the event count is a multiple of five, blink PD15 three times and
+   expose the five records for inspection in the debugger.
+7. Use PD14 for an invalid RTC or state error, and document how the error is
+   cleared.
+8. Test normal presses, a held button, rapid presses, event numbers 5 and 10,
+   and RTC rollover at a minute boundary.
+9. Keep interrupt handlers short and keep SWD enabled.
+
+======================================================================
+SOLUTION
+======================================================================
+
+STEP 1 - CubeMX (.ioc) settings
+------------------------------------------------------------
+SYS               | Debug = Serial Wire
+RCC               | default (HSI 16 MHz)
+PD12-PD15         | GPIO_Output
+PA0               | GPIO_EXTI0 rising, NVIC EXTI line0 ON
+RTC               | Activate Clock Source + Activate Calendar
+RTC calendar      | set initial time/date (e.g. 10:00:00, 01 Nov 2026)
+Clock config      | RTC clock mux = LSI
+------------------------------------------------------------
+
+STEP 2 - replace the WHOLE Core/Src/main.c with the code below
+------------------------------------------------------------
+/* ============================================================
+   6.3 - complete main.c for STM32F407G-DISC1
+   1. New STM32 project -> Board Selector -> STM32F4DISCOVERY.
+      "Initialize all peripherals with their default mode?" -> NO.
+   2. In the .ioc apply the CubeMX table of this question, save (Ctrl+S)
+      so CubeIDE generates the HAL drivers, msp and interrupt files.
+   3. Open Core/Src/main.c, select all, paste this whole file. Build.
+   ------------------------------------------------------------
+Watch log5[], events and head in Live Expressions.
+   ============================================================ */
+#include "main.h"
+
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+RTC_HandleTypeDef hrtc;
+
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* USER CODE BEGIN PV */
+/* 5 newest events: number, hour, min, sec, date, month, year */
+uint32_t ev_num[5];
+uint8_t ev_hh[5];
+uint8_t ev_mm[5];
+uint8_t ev_ss[5];
+uint8_t ev_dd[5];
+uint8_t ev_mo[5];
+uint8_t ev_yy[5];
+uint8_t pos =0;
+uint32_t events =0;
+volatile uint8_t press =0;
+uint32_t last =0;
+RTC_TimeTypeDef t;
+RTC_DateTypeDef d;
+/* USER CODE END PV */
+
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_RTC_Init(void);
+
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_RTC_Init();
+
+    /* USER CODE BEGIN 2 */
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, 1);   /* ready */
+    /* USER CODE END 2 */
+
+    while (1)
+    {
+    /* USER CODE BEGIN 3 */
+	if(press)
+	{
+		press =0;
+		if(HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BIN) != HAL_OK || HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BIN) != HAL_OK)
+		{
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, 1);   /* RTC error, cleared by next good read */
+		}
+		else
+		{
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, 0);
+			events++;
+			ev_num[pos] = events;
+			ev_hh[pos] = t.Hours;
+			ev_mm[pos] = t.Minutes;
+			ev_ss[pos] = t.Seconds;
+			ev_dd[pos] = d.Date;
+			ev_mo[pos] = d.Month;
+			ev_yy[pos] = d.Year;
+			pos++;
+			if(pos >= 5)
+			{
+				pos =0;
+			}
+
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, 1);
+			HAL_Delay(500);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, 0);
+
+			if(events % 5 == 0)
+			{
+				for(int i=0 ; i<3 ; i++)
+				{
+					HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, 1);
+					HAL_Delay(200);
+					HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, 0);
+					HAL_Delay(200);
+				}
+			}
+		}
+	}
+    /* USER CODE END 3 */
+    }
+}
+
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.LSIState = RCC_LSI_ON;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_0;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+}
+
+static void MX_RTC_Init(void)
+{
+    RTC_TimeTypeDef sTime = {0};
+    RTC_DateTypeDef sDate = {0};
+
+    hrtc.Instance = RTC;
+    hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+    hrtc.Init.AsynchPrediv = 127;
+    hrtc.Init.SynchPrediv = 249;            /* LSI 32 kHz / 128 / 250 = 1 Hz */
+    hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+    hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+    hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+    if (HAL_RTC_Init(&hrtc) != HAL_OK) Error_Handler();
+
+    sTime.Hours = 10; sTime.Minutes = 0; sTime.Seconds = 0;
+    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
+    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+    if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN) != HAL_OK) Error_Handler();
+    sDate.WeekDay = RTC_WEEKDAY_SUNDAY; sDate.Month = RTC_MONTH_NOVEMBER;
+    sDate.Date = 1; sDate.Year = 26;
+    if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN) != HAL_OK) Error_Handler();
+}
+
+/* USER CODE BEGIN 4 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	uint32_t now = HAL_GetTick();
+	if(GPIO_Pin == GPIO_PIN_0 && now-last>250)
+	{
+		last =now;
+		press =1;
+	}
+}
+/* USER CODE END 4 */
+
+void Error_Handler(void)
+{
+    __disable_irq();
+    while (1) { }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line) { }
+#endif

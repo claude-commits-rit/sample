@@ -1,0 +1,254 @@
+6.4  RTC CLOCK UART DISPLAY
+===========================
+
+Board      : STM32F407G-DISC1 (Discovery)
+Tool       : STM32CubeIDE, HAL
+Clock      : HSI 16 MHz (timer clock 16 MHz) unless stated
+Debug      : SYS -> Serial Wire, always
+Onboard    : PD12 green, PD13 orange, PD14 red, PD15 blue, PA0 user button
+             (HIGH when pressed), LIS3DSH accelerometer on SPI1
+             (PA5 SCK, PA6 MISO, PA7 MOSI, PE3 CS), internal ADC temp/VREFINT
+UART       : USART2, PA2 = TX, PA3 = RX, 115200 8N1, no flow control.
+             The Discovery has no USB-serial, so connect a USB-TTL adapter
+             (adapter TX -> PA3, adapter RX -> PA2, GND -> GND, 3.3 V logic).
+
+Scenario:
+Build a clock. Every second print "HH:MM:SS" over UART. The user can set the
+time by typing "T HH:MM:SS" and Enter. PD13 blinks every second.
+
+Tasks:
+1. Enable RTC with LSI clock, set an initial time and date.
+2. Read with HAL_RTC_GetTime() then HAL_RTC_GetDate() (always both, in that
+   order).
+3. Print only when the seconds value changes.
+4. Parse the set command and apply it with HAL_RTC_SetTime().
+5. At every full minute, blink PD15 three times.
+
+Doubts to answer:
+- Why must GetDate be called after GetTime?
+- Why is LSI less accurate than LSE?
+
+======================================================================
+SOLUTION
+======================================================================
+
+STEP 1 - CubeMX (.ioc) settings
+------------------------------------------------------------
+SYS               | Debug = Serial Wire
+RCC               | default (HSI 16 MHz)
+PD13, PD15        | GPIO_Output
+USART2            | Asynchronous, 115200, 8N1 (PA2 TX, PA3 RX)
+USART2 NVIC       | USART2 global interrupt ON (if using _IT)
+RTC               | Activate Clock Source + Calendar, clock = LSI
+------------------------------------------------------------
+
+STEP 2 - replace the WHOLE Core/Src/main.c with the code below
+------------------------------------------------------------
+/* ============================================================
+   6.4 - complete main.c for STM32F407G-DISC1
+   1. New STM32 project -> Board Selector -> STM32F4DISCOVERY.
+      "Initialize all peripherals with their default mode?" -> NO.
+   2. In the .ioc apply the CubeMX table of this question, save (Ctrl+S)
+      so CubeIDE generates the HAL drivers, msp and interrupt files.
+   3. Open Core/Src/main.c, select all, paste this whole file. Build.
+   ------------------------------------------------------------
+
+   ============================================================ */
+#include "main.h"
+
+/* USER CODE BEGIN Includes */
+#include<stdio.h>
+#include<string.h>
+/* USER CODE END Includes */
+
+UART_HandleTypeDef huart2;
+RTC_HandleTypeDef hrtc;
+
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* USER CODE BEGIN PV */
+uint8_t rx;
+volatile uint8_t got =0;
+char cmd[16];
+uint8_t idx =0;
+uint8_t last_sec =99;
+RTC_TimeTypeDef t;
+RTC_DateTypeDef d;
+char msg[16];
+/* USER CODE END PV */
+
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_RTC_Init(void);
+
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_USART2_UART_Init();
+    MX_RTC_Init();
+
+    /* USER CODE BEGIN 2 */
+	HAL_UART_Receive_IT(&huart2, &rx, 1);
+    /* USER CODE END 2 */
+
+    while (1)
+    {
+    /* USER CODE BEGIN 3 */
+	HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BIN);   /* time first */
+	HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BIN);   /* then date */
+
+	if(t.Seconds != last_sec)
+	{
+		last_sec = t.Seconds;
+		sprintf(msg, "%02d:%02d:%02d\r\n", t.Hours, t.Minutes, t.Seconds);
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+		HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_13);
+
+		if(t.Seconds == 0)   /* full minute */
+		{
+			for(int i=0 ; i<3 ; i++)
+			{
+				HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, 1);
+				HAL_Delay(100);
+				HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, 0);
+				HAL_Delay(100);
+			}
+		}
+	}
+
+	if(got)
+	{
+		got =0;
+		if(rx == '\r')
+		{
+			cmd[idx] = 0;
+			idx=0;
+			int hh, mm, ss;
+			if(sscanf(cmd, "T %d:%d:%d", &hh, &mm, &ss) == 3 && hh < 24 && mm < 60 && ss < 60)
+			{
+				RTC_TimeTypeDef n = {0};
+				n.Hours = hh;
+				n.Minutes = mm;
+				n.Seconds = ss;
+				HAL_RTC_SetTime(&hrtc, &n, RTC_FORMAT_BIN);
+				HAL_UART_Transmit(&huart2, (uint8_t*)"Time set\r\n", 10, 100);
+			}
+			else
+			{
+				HAL_UART_Transmit(&huart2, (uint8_t*)"Use: T HH:MM:SS\r\n", 17, 100);
+			}
+		}
+		else if(rx != '\n' && idx < 15)
+		{
+			cmd[idx++] = rx;
+		}
+		HAL_UART_Receive_IT(&huart2, &rx, 1);
+	}
+    /* USER CODE END 3 */
+    }
+}
+
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
+    RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.LSIState = RCC_LSI_ON;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13|GPIO_PIN_15, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_15;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+}
+
+static void MX_USART2_UART_Init(void)
+{
+    huart2.Instance = USART2;
+    huart2.Init.BaudRate = 115200;
+    huart2.Init.WordLength = UART_WORDLENGTH_8B;
+    huart2.Init.StopBits = UART_STOPBITS_1;
+    huart2.Init.Parity = UART_PARITY_NONE;
+    huart2.Init.Mode = UART_MODE_TX_RX;
+    huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+    if (HAL_UART_Init(&huart2) != HAL_OK) Error_Handler();
+}
+
+static void MX_RTC_Init(void)
+{
+    RTC_TimeTypeDef sTime = {0};
+    RTC_DateTypeDef sDate = {0};
+
+    hrtc.Instance = RTC;
+    hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+    hrtc.Init.AsynchPrediv = 127;
+    hrtc.Init.SynchPrediv = 249;            /* LSI 32 kHz / 128 / 250 = 1 Hz */
+    hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+    hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+    hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+    if (HAL_RTC_Init(&hrtc) != HAL_OK) Error_Handler();
+
+    sTime.Hours = 10; sTime.Minutes = 0; sTime.Seconds = 0;
+    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
+    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+    if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN) != HAL_OK) Error_Handler();
+    sDate.WeekDay = RTC_WEEKDAY_SUNDAY; sDate.Month = RTC_MONTH_NOVEMBER;
+    sDate.Date = 1; sDate.Year = 26;
+    if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN) != HAL_OK) Error_Handler();
+}
+
+/* USER CODE BEGIN 4 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if(huart->Instance == USART2)
+	{
+		got =1;
+	}
+}
+/* USER CODE END 4 */
+
+void Error_Handler(void)
+{
+    __disable_irq();
+    while (1) { }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line) { }
+#endif

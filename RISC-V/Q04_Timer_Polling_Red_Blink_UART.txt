@@ -1,0 +1,83 @@
+Q4. TIMER POLLING RED BLINK UART
+=================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Source     : class RISC-V practice sheet, Question 4
+
+Configure Timer 0 with a 1-second periodic interval and use TIMER_GetCount()
+to wait for the timer count to reach zero. Toggle the red LED each time the
+counter expires.
+
+Also transmit a UART message each time the red LED changes state:
+
+    RED LED ON
+    RED LED OFF
+
+Reinitialize or restart the timer as needed so that the sequence continues.
+Explain in your report why timer polling is less suitable than timer
+interrupts for a responsive embedded application.
+
+Required concepts:
+- TIMER_Init()
+- TIMER_Start()
+- TIMER_GetCount()
+- GPIO_TogglePin()
+- UART_Transmit()
+
+Reference example:
+- examples/Timer/TimerPolling/timer_poll.c
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+
+#define MILLIS(ms) ((uint32_t)((ms) * 100000UL))
+
+uint8_t on =0;
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	RGB_RED_RST;
+	UART_Init(&huart0);
+
+	htimer0.LoadCount = MILLIS(1000);   /* set BEFORE TIMER_Init */
+	TIMER_Init(&htimer0);
+	TIMER_Start(&htimer0);              /* periodic, reloads itself */
+
+	while(1)
+	{
+		while(TIMER_GetCount(&htimer0) != 0)
+		{
+		}
+
+		if(on == 0)
+		{
+			RGB_RED_SET;
+			UART_Transmit(&huart0, "RED LED ON\r\n", 12);
+			on =1;
+		}
+		else
+		{
+			RGB_RED_RST;
+			UART_Transmit(&huart0, "RED LED OFF\r\n", 13);
+			on =0;
+		}
+	}
+}
+/* Polling keeps the CPU stuck in the wait loop. An interrupt frees it. */

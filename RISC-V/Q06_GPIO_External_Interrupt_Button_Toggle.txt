@@ -1,0 +1,91 @@
+Q6. GPIO EXTERNAL INTERRUPT BUTTON TOGGLE
+==========================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Source     : class RISC-V practice sheet, Question 6
+
+Connect an active-high push button to GPIOA pin 3 as shown in the GPIO
+external-interrupt example. Configure the pin as an input and enable its GPIO
+interrupt.
+
+Every valid button press must toggle the blue LED. Add software debounce of at
+least 100 ms. The debounce must not permanently block the processor in the
+GPIO interrupt callback.
+
+The main loop should remain otherwise idle. Include a UART message after each
+button event indicating whether the blue LED is ON or OFF.
+
+Required concepts:
+- GPIO_IT_Enable(3)
+- GPIO_EXTICallback()
+- active-high GPIO interrupt input
+- volatile event flags
+- interrupt debounce
+
+Reference files:
+- examples/GPIO/GPIO_Interrupt/gpio_int.c
+- examples/GPIO/GPIO_Interrupt/README.md
+- hal/drivers/hal_gpio.c
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+
+/* Wiring: 3.3V -> button -> GPIOA pin 3, 10k pull-down to GND */
+
+volatile uint8_t btn =0;
+uint8_t blue =0;
+
+void GPIO_EXTICallback(uint16_t pin)
+{
+	if(pin == 3)
+	{
+		btn =1;
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_BLUE, GPIO_OUT);
+	RGB_BLUE_RST;
+	UART_Init(&huart0);
+
+	GPIO_Init(GPIOA, 3, GPIO_IN);
+	GPIO_IT_Enable(3);
+
+	while(1)
+	{
+		if(btn)
+		{
+			if(blue == 0)
+			{
+				blue =1;
+				RGB_BLUE_SET;
+				UART_Transmit(&huart0, "Blue LED ON\r\n", 13);
+			}
+			else
+			{
+				blue =0;
+				RGB_BLUE_RST;
+				UART_Transmit(&huart0, "Blue LED OFF\r\n", 14);
+			}
+			delayms(150);   /* debounce in main, not in callback */
+			btn =0;         /* drop bounces from the wait */
+		}
+	}
+}

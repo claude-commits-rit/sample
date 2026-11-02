@@ -1,0 +1,85 @@
+Q3. UART POLLING CHARACTER CLASSIFICATION
+==========================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Source     : class RISC-V practice sheet, Question 3
+
+Initialize UART0 and receive one character at a time using UART_Receive().
+For every received character, transmit a response in the following format:
+
+    Received: <character>, Type: <classification>
+
+Classify the character as one of the following:
+- Uppercase alphabet
+- Lowercase alphabet
+- Digit
+- Whitespace
+- Special character
+
+Use UART_Transmit() to send the response. The program must continue running
+until the board is reset.
+
+Required concepts:
+- UART_Init()
+- UART_Receive()
+- UART_Transmit()
+- character classification in C
+
+Reference example:
+- examples/UART/UART_Polling/uart.c
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+#include <stdio.h>
+#include <string.h>
+
+char ch;
+char msg[64];
+
+int main(void)
+{
+	UART_Init(&huart0);
+
+	while(1)
+	{
+		UART_Receive(&huart0, &ch, 1);
+
+		if(ch >= 'A' && ch <= 'Z')
+		{
+			sprintf(msg, "Received: %c, Type: Uppercase alphabet\r\n", ch);
+		}
+		else if(ch >= 'a' && ch <= 'z')
+		{
+			sprintf(msg, "Received: %c, Type: Lowercase alphabet\r\n", ch);
+		}
+		else if(ch >= '0' && ch <= '9')
+		{
+			sprintf(msg, "Received: %c, Type: Digit\r\n", ch);
+		}
+		else if(ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n')
+		{
+			sprintf(msg, "Received: (space), Type: Whitespace\r\n");
+		}
+		else
+		{
+			sprintf(msg, "Received: %c, Type: Special character\r\n", ch);
+		}
+		UART_Transmit(&huart0, msg, strlen(msg));
+	}
+}

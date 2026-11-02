@@ -1,0 +1,89 @@
+Q26. TIMER POLLING VS INTERRUPT COMPARISON
+==========================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+Run the same task twice: blink red every 500 ms with timer POLLING, while
+also echoing UART characters. Then rewrite it with timer INTERRUPT.
+Type fast in the terminal and compare.
+
+Tasks:
+1. Version A: while(TIMER_GetCount() != 0) wait, then toggle, then echo.
+2. Version B: TIMER_Start_IT + callback toggles; main only echoes.
+3. Write down what you observe (lost or delayed characters).
+
+Doubts:
+- Why does the polling version respond slowly to UART input?
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+
+#define MILLIS(ms) ((uint32_t)((ms) * 100000UL))
+
+/* Version B (interrupt) is active.
+   Version A (polling) is in the comment at the bottom - swap to test it. */
+char rx;
+volatile uint8_t got =0;
+
+void UART_RxCpltCallback(UART_Handle_t *huart)
+{
+	got =1;
+}
+
+void TIMER_ElapsedCallback(TIMER_Handle_t *htimer)
+{
+	if(htimer == &htimer0)
+	{
+		GPIO_TogglePin(GPIOB, RGB_RED);
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	UART_Init(&huart0);
+	htimer0.LoadCount = MILLIS(500);
+	TIMER_Init(&htimer0);
+	TIMER_Start_IT(&htimer0);
+	UART_Receive_IT(&huart0, &rx, 1);
+
+	while(1)
+	{
+		if(got)
+		{
+			got =0;
+			UART_Transmit(&huart0, &rx, 1);
+			UART_Receive_IT(&huart0, &rx, 1);
+		}
+	}
+}
+
+/* Version A (polling) main loop:
+	TIMER_Start(&htimer0);
+	while(1)
+	{
+		while(TIMER_GetCount(&htimer0) != 0)   CPU stuck here
+		{
+		}
+		GPIO_TogglePin(GPIOB, RGB_RED);
+		UART_Receive(&huart0, &c, 1);           also blocks
+		UART_Transmit(&huart0, &c, 1);
+	}
+   Observation: in A the echo waits for the timer and the LED waits for a key,
+   so both are late. In B both run independently. */

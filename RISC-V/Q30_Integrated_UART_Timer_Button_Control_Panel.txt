@@ -1,0 +1,264 @@
+Q30. INTEGRATED UART TIMER BUTTON CONTROL PANEL
+===============================================
+
+Board      : ARIES v2 (THEJAS32 SoC, VEGA ET1031 RISC-V core, 100 MHz)
+SDK        : Lyra SDK, #include <vega/hal.h> and <vega/aries.h>, build with make
+Onboard    : RGB LED on GPIOB (RGB_RED 8, RGB_GREEN 6, RGB_BLUE 7), ACTIVE-LOW
+             -> use RGB_x_SET (on) / RGB_x_RST (off)
+             LED_2 (5), LED_3 (4), BTN0 (3), BTN1 (2) active-low (pressed = 0),
+             SWITCH0 (0), SWITCH1 (1) on GPIOB
+UART       : huart0 over the board USB cable, 115200 8N1 (minicom)
+Timers     : htimer0/1/2, LoadCount = MILLIS(t) with #define MILLIS(t) ((t)*100000)
+
+Scenario:
+A control panel combining everything:
+    UART: 'r','g','b' select colour, 'f' fast blink 100 ms, 's' slow 1 s,
+          'p' pause, 'i' print info (colour, speed, paused, uptime)
+    BTN0: next colour, BTN1: toggle pause
+    SWITCH0 ON: lock buttons (UART only)
+    Timer 0: blink, Timer 1: 1 s uptime counter
+Print a status line every time anything changes.
+
+Tasks:
+1. All callbacks short (flags/state only).
+2. One "apply state" function in main updates LEDs and timer.
+3. Ignore '\r' / '\n'; print "Invalid" for unknown keys.
+
+Doubts:
+- Draw the state table of colour x speed x pause.
+
+
+======================================================================
+SOLUTION
+======================================================================
+
+Copy everything below into main.c, in the same folder as the
+Makefile from this RISC-V folder, then: make  /  make flash
+------------------------------------------------------------
+#include <vega/hal.h>
+#include <vega/aries.h>
+#include <stdio.h>
+#include <string.h>
+
+#define MILLIS(ms) ((uint32_t)((ms) * 100000UL))
+
+/* color: 0 RED, 1 GREEN, 2 BLUE
+   SWITCH0 = 1 locks the buttons (UART only) */
+char rx;
+volatile uint8_t got =0;
+volatile uint8_t blink =0;
+volatile uint32_t uptime =0;
+uint8_t color =0;
+uint8_t fast =0;
+uint8_t paused =0;
+uint8_t led_on =1;
+uint8_t changed =1;   /* 1 = restart timer, show colour, print status */
+uint8_t info =0;      /* 1 = print status only */
+int p0 =1;
+int p1 =1;
+char msg[40];
+
+void UART_RxCpltCallback(UART_Handle_t *huart)
+{
+	got =1;
+}
+
+void TIMER_ElapsedCallback(TIMER_Handle_t *htimer)
+{
+	if(htimer == &htimer0)
+	{
+		blink =1;
+	}
+	else if(htimer == &htimer1)
+	{
+		uptime++;
+	}
+}
+
+int main(void)
+{
+	GPIO_Init(GPIOB, RGB_RED, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_GREEN, GPIO_OUT);
+	GPIO_Init(GPIOB, RGB_BLUE, GPIO_OUT);
+	GPIO_Init(GPIOB, BTN0, GPIO_IN);
+	GPIO_Init(GPIOB, BTN1, GPIO_IN);
+	GPIO_Init(GPIOB, SWITCH0, GPIO_IN);
+	UART_Init(&huart0);
+	htimer1.LoadCount = MILLIS(1000);
+	TIMER_Init(&htimer1);
+	TIMER_Start_IT(&htimer1);
+	UART_Receive_IT(&huart0, &rx, 1);
+
+	while(1)
+	{
+		/* buttons */
+		int locked = GPIO_ReadPin(GPIOB, SWITCH0);
+		int b0 = GPIO_ReadPin(GPIOB, BTN0);
+		int b1 = GPIO_ReadPin(GPIOB, BTN1);
+		if(locked == 0 && p0 == 1 && b0 == 0)
+		{
+			color++;
+			if(color > 2)
+			{
+				color =0;
+			}
+			changed =1;
+		}
+		if(locked == 0 && p1 == 1 && b1 == 0)
+		{
+			if(paused == 0)
+			{
+				paused =1;
+			}
+			else
+			{
+				paused =0;
+			}
+			info =1;
+		}
+		p0 =b0;
+		p1 =b1;
+
+		/* UART commands */
+		if(got)
+		{
+			got =0;
+			if(rx == 'r')
+			{
+				color =0;
+				changed =1;
+			}
+			else if(rx == 'g')
+			{
+				color =1;
+				changed =1;
+			}
+			else if(rx == 'b')
+			{
+				color =2;
+				changed =1;
+			}
+			else if(rx == 'f')
+			{
+				fast =1;
+				changed =1;
+			}
+			else if(rx == 's')
+			{
+				fast =0;
+				changed =1;
+			}
+			else if(rx == 'p')
+			{
+				if(paused == 0)
+				{
+					paused =1;
+				}
+				else
+				{
+					paused =0;
+				}
+				info =1;
+			}
+			else if(rx == 'i')
+			{
+				info =1;
+			}
+			else if(rx != '\r' && rx != '\n')
+			{
+				UART_Transmit(&huart0, "Invalid\r\n", 9);
+			}
+			UART_Receive_IT(&huart0, &rx, 1);
+		}
+
+		/* blink */
+		if(blink)
+		{
+			blink =0;
+			if(paused == 0)
+			{
+				if(led_on == 0)
+				{
+					led_on =1;
+				}
+				else
+				{
+					led_on =0;
+				}
+			}
+		}
+
+		/* restart blink timer with the new speed */
+		if(changed)
+		{
+			changed =0;
+			info =1;
+			led_on =1;
+			TIMER_Stop(&htimer0);
+			if(fast)
+			{
+				htimer0.LoadCount = MILLIS(100);
+			}
+			else
+			{
+				htimer0.LoadCount = MILLIS(1000);
+			}
+			TIMER_Init(&htimer0);
+			TIMER_Start_IT(&htimer0);
+		}
+
+		/* LED output */
+		RGB_RED_RST;
+		RGB_GREEN_RST;
+		RGB_BLUE_RST;
+		if(led_on && color == 0)
+		{
+			RGB_RED_SET;
+		}
+		else if(led_on && color == 1)
+		{
+			RGB_GREEN_SET;
+		}
+		else if(led_on && color == 2)
+		{
+			RGB_BLUE_SET;
+		}
+
+		/* status line */
+		if(info)
+		{
+			info =0;
+			if(color == 0)
+			{
+				UART_Transmit(&huart0, "Colour RED, ", 12);
+			}
+			else if(color == 1)
+			{
+				UART_Transmit(&huart0, "Colour GREEN, ", 14);
+			}
+			else
+			{
+				UART_Transmit(&huart0, "Colour BLUE, ", 13);
+			}
+			if(fast)
+			{
+				UART_Transmit(&huart0, "fast, ", 6);
+			}
+			else
+			{
+				UART_Transmit(&huart0, "slow, ", 6);
+			}
+			if(paused)
+			{
+				UART_Transmit(&huart0, "PAUSED, ", 8);
+			}
+			else
+			{
+				UART_Transmit(&huart0, "running, ", 9);
+			}
+			sprintf(msg, "Uptime %lu s\r\n", (unsigned long)uptime);
+			UART_Transmit(&huart0, msg, strlen(msg));
+		}
+		delayms(20);
+	}
+}
