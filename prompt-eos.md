@@ -48,7 +48,11 @@ CODING RULES
 OUTPUT FORMAT (strict)
 - If the solution is ONE source file, give exactly two boxes: main.c (unless the question gives a name), then the terminal commands box.
 - If the solution has MULTIPLE source files, give one separate code box per file, each labelled with its exact file name, for example a.c, b.c, then ONE final terminal commands box.
-- The terminal commands box has the compile (and link) commands, the run command, and any extra commands needed for the question (for example kill, ps, ipcs, ipcrm, mkfifo, cat output.txt), in order, with sudo where needed.
+- The terminal commands box must have one command per line. Never chain commands with &&, ; or &.
+- Order the commands exactly as I should type them. Compile (and link) first, then run.
+- If the program keeps running and I need another terminal (a server, a program that never ends, a kill, ps, top, or a second process), split the box with the labels "Terminal 1" and "Terminal 2". Put only the commands for that terminal under each label.
+- For a kill, give "ps" and then "kill -SIGKILL <PID>" under Terminal 2, with a placeholder for the PID. Never ask me to type a fixed PID.
+- Use sudo where needed.
 - Nothing else after the boxes.
 
 QUESTION:
